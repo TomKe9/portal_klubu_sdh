@@ -352,8 +352,8 @@ elif st.session_state.logged_in:
                         "prezdivka": nova_prez if nova_prez != "" else None
                     }
                     
-                    # Uložíme textové údaje do Supabase
-                    supabase.table("uzivatele").update(zchanges=zmeny if 'zchanges' in locals() else zmeny).eq("id", st.session_state.user_id).execute()
+                    # Opraveno: Správný update v Supabase bez překlepů
+                    supabase.table("uzivatele").update(zmeny).eq("id", st.session_state.user_id).execute()
                     
                     # Uložíme profilovku lokálně do souboru (Supabase vůbec netřeba otravovat)
                     uloz_avatar_uzivatele(st.session_state.user_id, vysledny_avatar)
