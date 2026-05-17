@@ -2,6 +2,9 @@ import streamlit as st
 from supabase import create_client, Client
 import bcrypt
 import datetime
+import base64
+from PIL import Image
+import io
 
 # 1. Propojení se Supabase pomocí Secrets
 @st.cache_resource
@@ -12,6 +15,14 @@ def init_connection():
 
 supabase: Client = init_connection()
 
+# Pomocná funkce pro bezpečné zobrazení profilovky (emoji nebo Base64 obrázek)
+def zobraz_profilovku(avatar_data):
+    if not avatar_data:
+        return "🧑‍🚒"
+    if str(avatar_data).startswith("data:image"):
+        return f'<img src="{avatar_data}" style="border-radius: 50%; width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 8px;">'
+    return f'<span style="font-size: 24px; vertical-align: middle; margin-right: 8px;">{avatar_data}</span>'
+
 # Inicializace session state – MUSÍ BÝT ÚPLNĚ NAHOŘE
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -20,22 +31,27 @@ if "logged_in" not in st.session_state:
     st.session_state.user_role = "člen"
     st.session_state.sdh_id = None
     st.session_state.sdh_nazev = ""
+    st.session_state.user_avatar = "🧑‍🚒"
     st.session_state.stranka = "Plán akcí & Docházka"
 
 # Pomocné funkce pro trvalé přihlášení
 def nacti_trvale_prihlaseni():
     if "user_id" in st.query_params and not st.session_state.logged_in:
         u_id = st.query_params["user_id"]
-        res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").eq("id", u_id).execute()
-        if res.data:
-            user = res.data[0]
-            st.session_state.logged_in = True
-            st.session_state.user_id = user["id"]
-            st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
-            st.session_state.user_role = user["role"]
-            st.session_state.sdh_id = user["sdh_id"]
-            st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
-            st.session_state.stranka = "Plán akcí & Docházka"
+        try:
+            res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").eq("id", u_id).execute()
+            if res.data:
+                user = res.data[0]
+                st.session_state.logged_in = True
+                st.session_state.user_id = user["id"]
+                st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
+                st.session_state.user_role = user["role"]
+                st.session_state.sdh_id = user["sdh_id"]
+                st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
+                st.session_state.user_avatar = user.get("avatar") if user.get("avatar") else "🧑‍🚒"
+                st.session_state.stranka = "Plán akcí & Docházka"
+        except Exception:
+            pass # Pokud sloupec chybí, ignorujeme při trvalém přihlášení
 
 nacti_trvale_prihlaseni()
 
@@ -45,7 +61,6 @@ st.write("Informační systém pro dobrovolné hasiče")
 # --- STRUKTURA PRO PŘIHLÁŠENÉ UŽIVATELE (BOČNÍ PANEL) ---
 if st.session_state.logged_in:
     
-    # Zjištění, zda jsi zakladatel sboru (Správce systému)
     je_spravce = False
     vlastnik_res = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=False).limit(1).execute()
     if vlastnik_res.data and vlastnik_res.data[0]["id"] == st.session_state.user_id:
@@ -58,8 +73,9 @@ if st.session_state.logged_in:
         
     st.sidebar.write("---")
     
-    # 2. VIZITKA PŘIHLÁŠENÍ (UPROSTŘED)
-    st.sidebar.markdown(f"### 🧑‍🚒 {st.session_state.user_jmeno}")
+    # 2. VIZITKA PŘIHLÁŠENÍ S AVATAREM
+    av_html = zobraz_profilovku(st.session_state.user_avatar)
+    st.sidebar.markdown(f'<div style="display: flex; align-items: center;">{av_html}<h3 style="margin: 0; display: inline-block;">{st.session_state.user_jmeno}</h3></div>', unsafe_allow_html=True)
     st.sidebar.markdown(f"**Sbor:** {st.session_state.sdh_nazev}")
     
     zobrazeni_role = st.session_state.user_role
@@ -74,7 +90,6 @@ if st.session_state.logged_in:
     if je_spravce:
         menu_moznosti.append("🛠️ Správa sboru (Správce)")
         
-    # Pokud se nacházíme v "Moje nastavení", přidáme ho dočasně do menu, aby selectbox neselhal
     vsechny_moznosti_menu = menu_moznosti.copy()
     if st.session_state.stranka == "Moje nastavení":
         vsechny_moznosti_menu.append("Moje nastavení")
@@ -82,7 +97,6 @@ if st.session_state.logged_in:
     index_vypoctu = vsechny_moznosti_menu.index(st.session_state.stranka)
     volba_menu = st.sidebar.selectbox("Kam chcete jít?", vsechny_moznosti_menu, index=index_vypoctu)
     
-    # Detekce ruční změny v selectboxu
     if st.session_state.stranka != volba_menu:
         st.session_state.stranka = volba_menu
         st.rerun()
@@ -99,7 +113,7 @@ if st.session_state.logged_in:
             del st.query_params["user_id"]
         st.rerun()
 
-# --- SEKCE PRO NEPŘIHLÁŠENÉ (PŘIHLÁŠENÍ / REGISTRACE) ---
+# --- SEKCE PRO NEPŘIHLÁŠENÉ ---
 if not st.session_state.logged_in:
     tab1, tab2 = st.tabs(["🔒 Přihlášení", "📝 Registrace nového člena / sboru"])
     
@@ -111,27 +125,32 @@ if not st.session_state.logged_in:
         
         if st.button("Přihlásit se", type="primary"):
             if login_input and login_heslo:
-                res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{login_input},prezdivka.eq.{login_input}").execute()
-                if res.data:
-                    user = res.data[0]
-                    if bcrypt.checkpw(login_heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
-                        st.session_state.logged_in = True
-                        st.session_state.user_id = user["id"]
-                        st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
-                        st.session_state.user_role = user["role"]
-                        st.session_state.sdh_id = user["sdh_id"]
-                        st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
-                        st.session_state.stranka = "Plán akcí & Docházka"
-                        
-                        if zustat_prihlasen:
-                            st.query_params["user_id"] = str(user["id"])
+                try:
+                    res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{login_input},prezdivka.eq.{login_input}").execute()
+                    if res.data:
+                        user = res.data[0]
+                        if bcrypt.checkpw(login_heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
+                            st.session_state.logged_in = True
+                            st.session_state.user_id = user["id"]
+                            st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
+                            st.session_state.user_role = user["role"]
+                            st.session_state.sdh_id = user["sdh_id"]
+                            st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
+                            st.session_state.user_avatar = user.get("avatar") if user.get("avatar") else "🧑‍🚒"
+                            st.session_state.stranka = "Plán akcí & Docházka"
                             
-                        st.success("Úspěšně přihlášen!")
-                        st.rerun()
+                            if zustat_prihlasen:
+                                st.query_params["user_id"] = str(user["id"])
+                                
+                            st.success("Úspěšně přihlášen!")
+                            st.rerun()
+                        else:
+                            st.error("Nesprávné heslo.")
                     else:
-                        st.error("Nesprávné heslo.")
-                else:
-                    st.error("Uživatel s tímto údajems neexistuje.")
+                        st.error("Uživatel s tímto údajems neexistuje.")
+                except Exception as db_err:
+                    st.error("⚠️ Chyba databáze. Pravděpodobně nemáte vytvořený sloupec 'avatar' v Supabase.")
+                    st.info("Přejděte do Supabase -> Table Editor -> uzivatele -> Přidat sloupec 'avatar' typu 'text'.")
             else:
                 st.warning("Vyplňte prosím všechna pole.")
 
@@ -182,12 +201,13 @@ if not st.session_state.logged_in:
                         "email": reg_email,
                         "heslo_hash": hashed,
                         "role": vybrana_role,
-                        "prezdivka": None
+                        "prezdivka": None,
+                        "avatar": "🧑‍🚒"
                     }
                     supabase.table("uzivatele").insert(uzivatel_data).execute()
                     st.success("Registrace proběhla úspěšně! Nyní se můžete přihlásit.")
                 except Exception as e:
-                    st.error(f"Chyba při registraci. Detaily: {e}")
+                    st.error(f"Chyba při registraci. Chybí vám sloupec 'avatar' v DB? Detaily: {e}")
             else:
                 st.warning("Prosím vyplňte všechny údaje.")
 
@@ -238,42 +258,87 @@ elif st.session_state.logged_in:
                     
                     st.write("---")
                     st.write("**Přehled ostatních:**")
-                    # Zde byl opraven problém - odstranili jsme požadavek na chybějící sloupec avatar
-                    vsechna_dochazka = supabase.table("dochazka").select("status, uzivatele(jmeno, prijmeni, role)").eq("akce_id", akce["id"]).execute()
-                    if vsechna_dochazka.data:
+                    
+                    # BEZPEČNÉ NAČTENÍ S OŠETŘENÍM CHYBĚJÍCÍHO SLOUPCE
+                    try:
+                        vsechna_dochazka = supabase.table("dochazka").select("status, uzivatele(jmeno, prijmeni, role, avatar)").eq("akce_id", akce["id"]).execute()
+                        if vsechna_dochazka.data:
+                            for d in vsechna_dochazka.data:
+                                zobr_role = d['uzivatele']['role']
+                                cl_av = d['uzivatele'].get('avatar', '🧑‍🚒')
+                                av_mini = zobraz_profilovku(cl_av)
+                                st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 6px;">{av_mini}<span>{d["uzivatele"]["jmeno"]} {d["uzivatele"]["prijmeni"]} ({zobr_role}): <b>{d["status"]}</b></span></div>', unsafe_allow_html=True)
+                        else:
+                            st.caption("Zatím nikdo nevyplnil docházku.")
+                    except Exception:
+                        st.warning("⚠️ Nelze načíst profilovky. Chybí sloupec 'avatar' v Supabase databázi.")
+                        # Nouzový režim bez avatarů, aby kód nespadl
+                        vsechna_dochazka = supabase.table("dochazka").select("status, uzivatele(jmeno, prijmeni, role)").eq("akce_id", akce["id"]).execute()
                         for d in vsechna_dochazka.data:
-                            zobr_role = d['uzivatele']['role']
-                            st.write(f"🧑‍🚒 {d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']} ({zobr_role}): **{d['status']}**")
-                    else:
-                        st.caption("Zatím nikdo nevyplnil docházku.")
+                            st.write(f"🧑‍🚒 {d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']} ({d['uzivatele']['role']}): **{d['status']}**")
 
     # --- 2. SEZNAM ČLENŮ ---
     elif volba == "Seznam členů sboru":
         st.header("🧑‍🚒 Členové sboru")
-        clenove_res = supabase.table("uzivatele").select("jmeno, prijmeni, email, prezdivka, role").eq("sdh_id", st.session_state.sdh_id).execute()
-        if clenove_res.data:
+        try:
+            clenove_res = supabase.table("uzivatele").select("jmeno, prijmeni, email, prezdivka, role, avatar").eq("sdh_id", st.session_state.sdh_id).execute()
+            if clenove_res.data:
+                for c in clenove_res.data:
+                    prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
+                    cl_av = c.get('avatar', '🧑‍🚒')
+                    av_mini = zobraz_profilovku(cl_av)
+                    st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 8px;">{av_mini}<span><b>{c["jmeno"]} {c["prijmeni"]}</b>{prez_info} — <code>{c["role"]}</code> (Kontakt: {c["email"]})</span></div>', unsafe_allow_html=True)
+        except Exception:
+            st.warning("⚠️ Seznam zobrazen bez vlastních profilovek (chybí sloupec 'avatar' v DB).")
+            clenove_res = supabase.table("uzivatele").select("jmeno, prijmeni, email, prezdivka, role").eq("sdh_id", st.session_state.sdh_id).execute()
             for c in clenove_res.data:
                 prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
-                st.write(f"• 🧑‍🚒 **{c['jmeno']} {c['prijmeni']}**{prez_info} — `{c['role']}` (Kontakt: {c['email']})")
+                st.write(f"• 🧑‍🚒 **{c['jmeno']} {c['prijmeni']}**{prez_info} — `{c['role']}`")
 
-    # --- 3. MOJE NASTAVENÍ ---
+    # --- 3. MOJE NASTAVENÍ (PROFILOVKY + OŠETŘENÍ) ---
     elif volba == "Moje nastavení":
         st.header("⚙️ Moje osobní nastavení")
         
-        u_aktualni = supabase.table("uzivatele").select("prezdivka, role, email").eq("id", st.session_state.user_id).execute()
+        # Zkusíme načíst data včetně avataru
+        strav_avatar = "🧑‍🚒"
+        try:
+            u_aktualni = supabase.table("uzivatele").select("prezdivka, role, email, avatar").eq("id", st.session_state.user_id).execute()
+            strav_avatar = u_aktualni.data[0].get("avatar", "🧑‍🚒") if u_aktualni.data else "🧑‍🚒"
+        except Exception:
+            st.error("🚨 POZOR: V Supabase ti chybí sloupec 'avatar' typu 'text' v tabulce 'uzivatele'. Bez něj nelze změny profilovek uložit!")
+            u_aktualni = supabase.table("uzivatele").select("prezdivka, role, email").eq("id", st.session_state.user_id).execute()
+            
         strav_prezdivka = u_aktualni.data[0]["prezdivka"] if u_aktualni.data and u_aktualni.data[0]["prezdivka"] else ""
         strav_role = u_aktualni.data[0]["role"] if u_aktualni.data else "člen"
         strav_email = u_aktualni.data[0]["email"] if u_aktualni.data else ""
         
+        # --- VOLBA PROFILOVKY ---
+        st.subheader("🖼️ Moje profilovka")
+        typ_avataru = st.radio("Vyber si typ profilovky:", ["Chci použít Emoji text", "Chci nahrát vlastní fotku / obrázek"])
+        
+        vysledny_avatar = strav_avatar
+        
+        if typ_avataru == "Chci použít Emoji text":
+            vysledny_avatar = st.text_input("Zadej libovolné emoji (např. 👨‍🚒, 🚒, ⚡):", value=strav_avatar if not str(strav_avatar).startswith("data:image") else "🧑‍🚒", max_chars=5)
+        else:
+            nahrany_soubor = st.file_uploader("Nahraj fotku (PNG, JPG, JPEG) - automaticky se zmenší:", type=["png", "jpg", "jpeg"])
+            if nahrany_soubor is not None:
+                img = Image.open(nahrany_soubor)
+                img.thumbnail((120, 120)) # Optimalizace rozlišení pro databázi
+                buffered = io.BytesIO()
+                img.save(buffered, format="PNG")
+                img_str = base64.b64encode(buffered.getvalue()).decode()
+                vysledny_avatar = f"data:image/png;base64,{img_str}"
+                st.image(img, caption="Náhled nové fotky", width=70)
+        
+        st.write("---")
         st.subheader("📝 Uživatelské údaje")
         nova_prez = st.text_input("Moje přezdívka (pro login místo emailu):", value=strav_prezdivka).strip()
         novy_email = st.text_input("Můj kontaktní E-mail:", value=strav_email).strip()
         
         st.write("---")
-        
         st.subheader("🏃 Moje pozice v týmu")
         seznam_pozic = ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
-        
         index_role = seznam_pozic.index(strav_role) if strav_role in seznam_pozic else 7
         nova_role = st.selectbox("Moje hlavní pozice na útoku:", seznam_pozic, index=index_role)
         
@@ -285,21 +350,23 @@ elif st.session_state.logged_in:
                     zmeny = {
                         "role": nova_role,
                         "email": novy_email,
-                        "prezdivka": nova_prez if nova_prez != "" else None
+                        "prezdivka": nova_prez if nova_prez != "" else None,
+                        "avatar": vysledny_avatar
                     }
                     
                     supabase.table("uzivatele").update(zmeny).eq("id", st.session_state.user_id).execute()
-                    st.session_state.user_role = nova_role
                     
-                    st.success("Profil byl úspěšně aktualizován!")
+                    st.session_state.user_role = nova_role
+                    st.session_state.user_avatar = vysledny_avatar
+                    
+                    st.success("Profil úspěšně uložen!")
                     st.rerun()
                 except Exception as e:
-                    st.error("Nepodařilo se uložit. Zkontrolujte, zda přezdívku nebo e-mail už nepoužívá jiný člen.")
+                    st.error(f"Nepodařilo se uložit. Pokud jsi nepřidal sloupec 'avatar' do Supabase, uložení selže. Detaily: {e}")
 
     # --- 4. SPRÁVA SBORU ---
     elif volba == "🛠️ Správa sboru (Správce)":
         st.header("🛠️ Administrace sboru (Pouze Správce)")
-        
         tab_akce, tab_clenove = st.tabs(["➕ Přidat akci", "⚙️ Správa členů a pozic"])
         
         with tab_akce:
@@ -337,7 +404,6 @@ elif st.session_state.logged_in:
                 slovnik_clenu = {f"{u['jmeno']} {u['prijmeni']} (aktuálně: {u['role']})": u for u in cl_res.data}
                 vybrany_cl_text = st.selectbox("Vyberte člena pro změnu:", list(slovnik_clenu.keys()))
                 vybrany_uzivatel = slovnik_clenu[vybrany_cl_text]
-                
                 nova_pozice_admin = st.selectbox("Přiřadit novou pozici tomuto členovi:", 
                                            ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"])
                 
