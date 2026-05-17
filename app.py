@@ -47,8 +47,8 @@ def zobraz_profilovku(avatar_data):
     if not avatar_data:
         return "🧑‍🚒"
     if str(avatar_data).startswith("data:image"):
-        return f'<img src="{avatar_data}" style="border-radius: 50%; width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 8px;">'
-    return f'<span style="font-size: 24px; vertical-align: middle; margin-right: 8px;">{avatar_data}</span>'
+        return f"""<img src="{avatar_data}" style="border-radius: 50%; width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 8px;">"""
+    return f"""<span style="font-size: 24px; vertical-align: middle; margin-right: 8px;">{avatar_data}</span>"""
 
 
 # Inicializace session state
@@ -104,7 +104,7 @@ if st.session_state.logged_in:
     
     # 2. VIZITKA
     av_html = zobraz_profilovku(st.session_state.user_avatar)
-    st.sidebar.markdown(f'<div style="display: flex; align-items: center;">{av_html}<h3 style="margin: 0; display: inline-block;">{st.session_state.user_jmeno}</h3></div>', unsafe_allow_html=True)
+    st.sidebar.markdown(f"""<div style="display: flex; align-items: center;">{av_html}<h3 style="margin: 0; display: inline-block;">{st.session_state.user_jmeno}</h3></div>""", unsafe_allow_html=True)
     
     if st.sidebar.button(f"🏢 {st.session_state.sdh_nazev}", help="Zobrazit členy sboru", key="link_sbor"):
         st.session_state.stranka = "Seznam členů sboru"
@@ -333,7 +333,14 @@ elif st.session_state.logged_in:
                         for d in vsechna_dochazka.data:
                             cl_id = d['uzivatele']['id']
                             av_mini = zobraz_profilovku(ziskej_avatar_uzivatele(cl_id))
-                            st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 6px;">{av_mini}<span>{d["uzivatele"]["jmeno"]} {d["uzivatele"]["prijmeni"]} ({d["uzivatele"]["role"]}): <b>{d["status"]}</b></span></div>', unsafe_allow_html=True)
+                            
+                            html_dochazka = f"""
+                            <div style="display: flex; align-items: center; margin-bottom: 6px;">
+                                {av_mini}
+                                <span>{d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']} ({d['uzivatele']['role']}): <b>{d['status']}</b></span>
+                            </div>
+                            """
+                            st.markdown(html_dochazka, unsafe_allow_html=True)
                     else:
                         st.caption("Zatím nikdo nevyplnil.")
 
@@ -440,7 +447,14 @@ elif st.session_state.logged_in:
                 prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
                 cl_av = ziskej_avatar_uzivatele(c["id"])
                 av_mini = zobraz_profilovku(cl_av)
-                st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 8px;">{av_mini}<span><b>{c["jmeno"]} {c["prijmeni']}</b>{prez_info} — <code>{c["role"]}</code></span></div>', unsafe_allow_html=True)
+                
+                html_clen = f"""
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    {av_mini}
+                    <span><b>{c['jmeno']} {c['prijmeni']}</b>{prez_info} — <code>{c['role']}</code></span>
+                </div>
+                """
+                st.markdown(html_clen, unsafe_allow_html=True)
 
     # --- 5. MOJE NASTAVENÍ ---
     elif volba == "Moje nastavení":
