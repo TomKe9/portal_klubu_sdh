@@ -100,16 +100,15 @@ if not st.session_state.logged_in:
             if reg_jmeno and reg_prijmeni and reg_email and reg_heslo and (vybrany_sdh_id or novy_sbor_nazev):
                 try:
                     # 1. Pokud zakládá nový sbor, vytvoříme ho v DB
-if volba_sboru == "Zaregistrovat úplně nový sbor":
-    # Použijeme select pod dotazem, aby nám DB stoprocentně vrátila ID nového sboru
-    sbor_ins = supabase.table("sbory").insert({"nazev_sdh": novy_sbor_nazev}).execute()
-    
-    # Pojistka: Pokud insert nevrátil data, vyhledáme sbor podle názvu
-    if sbor_ins.data:
-        vybrany_sdh_id = sbor_ins.data[0]["id"]
-    else:
-        sbor_find = supabase.table("sbory").select("id").eq("nazev_sdh", novy_sbor_nazev).execute()
-        vybrany_sdh_id = sbor_find.data[0]["id"]
+                    if volba_sboru == "Zaregistrovat úplně nový sbor":
+                        sbor_ins = supabase.table("sbory").insert({"nazev_sdh": novy_sbor_nazev}).execute()
+                        
+                        # Pojistka pro správné načtení ID nového sboru
+                        if sbor_ins.data:
+                            vybrany_sdh_id = sbor_ins.data[0]["id"]
+                        else:
+                            sbor_find = supabase.table("sbory").select("id").eq("nazev_sdh", novy_sbor_nazev).execute()
+                            vybrany_sdh_id = sbor_find.data[0]["id"]
                     
                     # 2. Zašifrování hesla
                     hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -126,7 +125,7 @@ if volba_sboru == "Zaregistrovat úplně nový sbor":
                     supabase.table("uzivatele").insert(uzivatel_data).execute()
                     st.success("Registrace proběhla úspěšně! Nyní se můžete přihlásit v prvním tabu.")
                 except Exception as e:
-                    st.error(f"Chyba při registraci (např. e-mail nebo název sboru již existuje).")
+                    st.error(f"Chyba při registraci (např. e-mail nebo název sboru již existuje). Detaily: {e}")
             else:
                 st.warning("Prosím vyplňte všechny údaje.")
 
