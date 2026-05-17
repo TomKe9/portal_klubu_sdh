@@ -46,7 +46,7 @@ if st.session_state.logged_in:
     # Zjištění, zda jsi zakladatel sboru (Správce systému)
     # První registrovaný uživatel k danému sboru má u nás status správce sboru
     je_spravce = False
-    vlastnik_res = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at", descending=False).limit(1).execute()
+    vlastnik_res = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=False).limit(1).execute()
     if vlastnik_res.data and vlastnik_res.data[0]["id"] == st.session_state.user_id:
         je_spravce = True
     
@@ -219,7 +219,6 @@ elif st.session_state.logged_in:
                     vsechna_dochazka = supabase.table("dochazka").select("status, uzivatele(jmeno, prijmeni, role)").eq("akce_id", akce["id"]).execute()
                     if vsechna_dochazka.data:
                         for d in vsechna_dochazka.data:
-                            # Kontrola zda zobrazený uživatel náhodou není zakladatel (správce)
                             zobr_role = d['uzivatele']['role']
                             st.write(f"- {d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']} ({zobr_role}): {d['status']}")
                     else:
