@@ -20,6 +20,7 @@ if "logged_in" not in st.session_state:
     st.session_state.user_role = "člen"
     st.session_state.sdh_id = None
     st.session_state.sdh_nazev = ""
+    st.session_state.user_avatar = "🧑‍🚒"
     st.session_state.stranka = "Plán akcí & Docházka"
 
 # Pomocné funkce pro trvalé přihlášení
@@ -35,6 +36,7 @@ def nacti_trvale_prihlaseni():
             st.session_state.user_role = user["role"]
             st.session_state.sdh_id = user["sdh_id"]
             st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
+            st.session_state.user_avatar = user.get("avatar") if user.get("avatar") else "🧑‍🚒"
             st.session_state.stranka = "Plán akcí & Docházka"
 
 nacti_trvale_prihlaseni()
@@ -58,8 +60,8 @@ if st.session_state.logged_in:
         
     st.sidebar.write("---")
     
-    # 2. VIZITKA PŘIHLÁŠENÍ (UPROSTŘED)
-    st.sidebar.markdown(f"**Přihlášen:** {st.session_state.user_jmeno}")
+    # 2. VIZITKA PŘIHLÁŠENÍ (UPROSTŘED S PROFILOVÝM EMBLEMÉM)
+    st.sidebar.markdown(f"### {st.session_state.user_avatar} {st.session_state.user_jmeno}")
     st.sidebar.markdown(f"**Sbor:** {st.session_state.sdh_nazev}")
     
     zobrazeni_role = st.session_state.user_role
@@ -119,6 +121,7 @@ if not st.session_state.logged_in:
                         st.session_state.user_role = user["role"]
                         st.session_state.sdh_id = user["sdh_id"]
                         st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
+                        st.session_state.user_avatar = user.get("avatar") if user.get("avatar") else "🧑‍🚒"
                         st.session_state.stranka = "Plán akcí & Docházka"
                         
                         if zustat_prihlasen:
@@ -180,7 +183,8 @@ if not st.session_state.logged_in:
                         "email": reg_email,
                         "heslo_hash": hashed,
                         "role": vybrana_role,
-                        "prezdivka": None
+                        "prezdivka": None,
+                        "avatar": "🧑‍🚒"
                     }
                     supabase.table("uzivatele").insert(uzivatel_data).execute()
                     st.success("Registrace proběhla úspěšně! Nyní se můžete přihlásit.")
@@ -236,54 +240,80 @@ elif st.session_state.logged_in:
                     
                     st.write("---")
                     st.write("**Přehled ostatních:**")
-                    vsechna_dochazka = supabase.table("dochazka").select("status, uzivatele(jmeno, prijmeni, role)").eq("akce_id", akce["id"]).execute()
+                    vsechna_dochazka = supabase.table("dochazka").select("status, uzivatele(jmeno, prijmeni, role, avatar)").eq("akce_id", akce["id"]).execute()
                     if vsechna_dochazka.data:
                         for d in vsechna_dochazka.data:
                             zobr_role = d['uzivatele']['role']
-                            st.write(f"- {d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']} ({zobr_role}): {d['status']}")
+                            zobr_av = d['uzivatele'].get('avatar') if d['uzivatele'].get('avatar') else "🧑‍🚒"
+                            st.write(f"{zobr_av} {d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']} ({zobr_role}): **{d['status']}**")
                     else:
                         st.caption("Zatím nikdo nevyplnil docházku.")
 
     # --- 2. SEZNAM ČLENŮ ---
     elif volba == "Seznam členů sboru":
         st.header("🧑‍🚒 Členové sboru")
-        clenove_res = supabase.table("uzivatele").select("jmeno, prijmeni, email, prezdivka, role").eq("sdh_id", st.session_state.sdh_id).execute()
+        clenove_res = supabase.table("uzivatele").select("jmeno, prijmeni, email, prezdivka, role, avatar").eq("sdh_id", st.session_state.sdh_id).execute()
         if clenove_res.data:
             for c in clenove_res.data:
-                prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else " (přezdívka nenastavena)"
-                st.write(f"• **{c['jmeno']} {c['prijmeni']}**{prez_info} — `{c['role']}` (Kontakt: {c['email']})")
+                prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
+                zobr_av = c.get('avatar') if c.get('avatar') else "🧑‍🚒"
+                st.write(f"• {zobr_av} **{c['jmeno']} {c['prijmeni']}**{prez_info} — `{c['role']}` (Kontakt: {c['email']})")
 
-    # --- 3. MOJE NASTAVENÍ ---
+    # --- 3. MOJE NASTAVENÍ (ROZŠÍŘENÁ VERZE) ---
     elif volba == "Moje nastavení":
         st.header("⚙️ Moje osobní nastavení")
         
-        u_aktualni = supabase.table("uzivatele").select("prezdivka, role").eq("id", st.session_state.user_id).execute()
+        u_aktualni = supabase.table("uzivatele").select("prezdivka, role, email, avatar").eq("id", st.session_state.user_id).execute()
         strav_prezdivka = u_aktualni.data[0]["prezdivka"] if u_aktualni.data and u_aktualni.data[0]["prezdivka"] else ""
         strav_role = u_aktualni.data[0]["role"] if u_aktualni.data else "člen"
+        strav_email = u_aktualni.data[0]["email"] if u_aktualni.data else ""
+        strav_avatar = u_aktualni.data[0].get("avatar") if u_aktualni.data and u_aktualni.data[0].get("avatar") else "🧑‍🚒"
         
-        st.subheader("1. Uživatelská přezdívka")
+        # Sekce Profilovky (Emoji ikony)
+        st.subheader("🖼️ Profilová ikona")
+        seznam_avataru = ["🧑‍🚒", "👨‍🚒", "👩‍🚒", "🚒", "🚨", "🛡️", "🎖️", "🔥", "💨"]
+        
+        index_av = seznam_avataru.index(strav_avatar) if strav_avatar in seznam_avataru else 0
+        novy_av = st.segmented_control("Vyber si svůj znak/profilovku:", seznam_avataru, default=strav_avatar)
+        if not novy_av:
+            novy_av = strav_avatar
+            
+        st.write("---")
+        
+        st.subheader("📝 Uživatelské údaje")
         nova_prez = st.text_input("Moje přezdívka (pro login místo emailu):", value=strav_prezdivka).strip()
+        novy_email = st.text_input("Můj kontaktní E-mail:", value=strav_email).strip()
         
-        st.subheader("2. Moje pozice v týmu")
+        st.write("---")
+        
+        st.subheader("🏃 Moje pozice v týmu")
         seznam_pozic = ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
         
         index_role = seznam_pozic.index(strav_role) if strav_role in seznam_pozic else 7
         nova_role = st.selectbox("Moje hlavní pozice na útoku:", seznam_pozic, index=index_role)
         
-        if st.button("Uložit změny v nastavení", type="primary"):
-            try:
-                zmeny = {"role": nova_role}
-                if nova_prez == "":
-                    zmeny["prezdivka"] = None
-                else:
-                    zmeny["prezdivka"] = nova_prez
-                
-                supabase.table("uzivatele").update(zmeny).eq("id", st.session_state.user_id).execute()
-                st.session_state.user_role = nova_role
-                st.success("Nastavení bylo úspěšně uloženo!")
-                st.rerun()
-            except Exception as e:
-                st.error("Nepodařilo se uložit. Zkontrolujte, zda zvolenou přezdívku už nepoužívá jiný člen.")
+        if st.button("Uložit všechny změny", type="primary", use_container_width=True):
+            if not novy_email:
+                st.error("E-mail nesmí zůstat prázdný.")
+            else:
+                try:
+                    zmeny = {
+                        "role": nova_role,
+                        "email": novy_email,
+                        "avatar": novy_av,
+                        "prezdivka": nova_prez if nova_prez != "" else None
+                    }
+                    
+                    supabase.table("uzivatele").update(zmeny).eq("id", st.session_state.user_id).execute()
+                    
+                    # Aktualizace do session_state pro okamžitou změnu vzhledu bez odhlašování
+                    st.session_state.user_role = nova_role
+                    st.session_state.user_avatar = novy_av
+                    
+                    st.success("Profil byl úspěšně aktualizován!")
+                    st.rerun()
+                except Exception as e:
+                    st.error("Nepodařilo se uložit. Zkontrolujte, zda přezdívku nebo e-mail už nepoužívá jiný člen.")
 
     # --- 4. SPRÁVA SBORU ---
     elif volba == "🛠️ Správa sboru (Správce)":
