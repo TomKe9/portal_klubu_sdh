@@ -7,6 +7,8 @@ from PIL import Image
 import io
 import json
 import os
+# NOVÁ KNIHOVNA PRO KALENDÁŘ
+from streamlit_calendar import calendar
 
 # 1. Propojení se Supabase pomocí Secrets
 @st.cache_resource
@@ -100,12 +102,16 @@ if st.session_state.logged_in:
     # 2. VIZITKA PŘIHLÁŠENÍ S AVATAREM
     av_html = zobraz_profilovku(st.session_state.user_avatar)
     st.sidebar.markdown(f'<div style="display: flex; align-items: center;">{av_html}<h3 style="margin: 0; display: inline-block;">{st.session_state.user_jmeno}</h3></div>', unsafe_allow_html=True)
-    st.sidebar.markdown(f"**Sbor:** {st.session_state.sdh_nazev}")
+    
+    # Rychlý proklik na Členy sboru kliknutím na název SDH
+    if st.sidebar.button(f"🏢 {st.session_state.sdh_nazev}", help="Zobrazit členy sboru", key="link_sbor"):
+        st.session_state.stranka = "Seznam členů sboru"
+        st.rerun()
     
     zobrazeni_role = st.session_state.user_role
     if je_spravce:
-        zobrazeni_role += " (Správce sboru)"
-    st.sidebar.markdown(f"**Pozice:** {zobrazeni_role}")
+        zobrazeni_role += " (Správce)"
+    st.sidebar.caption(f"Pozice: {zobrazeni_role}")
     
     st.sidebar.write("---")
     
@@ -115,10 +121,10 @@ if st.session_state.logged_in:
         menu_moznosti.append("🛠️ Správa sboru (Správce)")
         
     vsechny_moznosti_menu = menu_moznosti.copy()
-    if st.session_state.stranka == "Moje nastavení":
+    if st.session_state.stranka == "Moje nastavení" and "Moje nastavení" not in vsechny_moznosti_menu:
         vsechny_moznosti_menu.append("Moje nastavení")
         
-    index_vypoctu = vsechny_moznosti_menu.index(st.session_state.stranka)
+    index_vypoctu = vsechny_moznosti_menu.index(st.session_state.stranka) if st.session_state.stranka in vsechny_moznosti_menu else 0
     volba_menu = st.sidebar.selectbox("Kam chcete jít?", vsechny_moznosti_menu, index=index_vypoctu)
     
     if st.session_state.stranka != volba_menu:
@@ -239,6 +245,49 @@ elif st.session_state.logged_in:
         
         akce_res = supabase.table("akce").select("*").eq("sdh_id", st.session_state.sdh_id).order("datum").execute()
         
+        # --- NOVINKA: INTEGRACE KALENDÁŘE ---
+        st.subheader("🗓️ Kalendářní přehled")
+        kalendar_udalosti = []
+        
+        # Výběr barev pro různé typy akcí, aby to bylo přehledné
+        barvy_akci = {
+            "Zásah": "#d32f2f",      # Červená
+            "Cvičení": "#1976d2",    # Modrá
+            "Soutěž": "#f57c00",     # Oranžová
+            "Brigáda": "#388e3c",    # Zelená
+            "Schůze": "#7b1fa2",     # Fialová
+            "Jiné": "#455a64"        # Šedá
+        }
+        
+        if akce_res.data:
+            for akce in akce_res.data:
+                barva = barvy_akci.get(akce["typ_akce"], "#1976d2")
+                kalendar_udalosti.append({
+                    "title": f"{akce['nazev_akce']} ({akce['cas'] if akce.get('cas') else ''})",
+                    "start": akce["datum"],
+                    "end": akce["datum"],
+                    "backgroundColor": barva,
+                    "borderColor": barva,
+                    "allDay": True
+                })
+        
+        # Nastavení vzhledu kalendáře (česky a měsíční pohled)
+        kalendar_options = {
+            "headerToolbar": {
+                "left": "prev,next today",
+                "center": "title",
+                "right": "dayGridMonth,listMonth"
+            },
+            "initialView": "dayGridMonth",
+            "locale": "cs"
+        }
+        
+        # Vykreslení kalendáře
+        calendar(events=kalendar_udalosti, options=kalendar_options, key="sdh_full_calendar")
+        
+        st.write("---")
+        st.subheader("📋 Podrobný seznam akcí a zápis docházky")
+        
         if not akce_res.data:
             st.write("Zatím nejsou naplánované žádné akce.")
         else:
@@ -289,17 +338,15 @@ elif st.session_state.logged_in:
                     else:
                         st.caption("Zatím nikdo nevyplnil docházku.")
 
-    # --- 2. SEZNAM ČLENŮ (UPRAVENO - ODSTRANĚN EMAIL) ---
+    # --- 2. SEZNAM ČLENŮ ---
     elif volba == "Seznam členů sboru":
         st.header("🧑‍🚒 Členové sboru")
-        # E-mail už zde vůbec netaháme z databáze
         clenove_res = supabase.table("uzivatele").select("id, jmeno, prijmeni, prezdivka, role").eq("sdh_id", st.session_state.sdh_id).execute()
         if clenove_res.data:
             for c in clenove_res.data:
                 prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
                 cl_av = ziskej_avatar_uzivatele(c["id"])
                 av_mini = zobraz_profilovku(cl_av)
-                # Vypsáno čistě bez kontaktu
                 st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 8px;">{av_mini}<span><b>{c["jmeno"]} {c["prijmeni"]}</b>{prez_info} — <code>{c["role"]}</code></span></div>', unsafe_allow_html=True)
 
     # --- 3. MOJE NASTAVENÍ ---
