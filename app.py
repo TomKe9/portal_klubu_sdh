@@ -12,6 +12,20 @@ def init_connection():
 
 supabase: Client = init_connection()
 
+# Pomocné funkce pro trvalé přihlášení (využívá query params pro simulaci cookies v rámci Streamlitu)
+def nacti_trvale_prihlaseni():
+    if "user_id" in st.query_params and not st.session_state.get("logged_in"):
+        u_id = st.query_params["user_id"]
+        res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").eq("id", u_id).execute()
+        if res.data:
+            user = res.data[0]
+            st.session_state.logged_in = True
+            st.session_state.user_id = user["id"]
+            st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
+            st.session_state.user_role = user["role"]
+            st.session_state.sdh_id = user["sdh_id"]
+            st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
+
 # Inicializace session state (paměti aplikace)
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -20,6 +34,9 @@ if "logged_in" not in st.session_state:
     st.session_state.user_role = "člen"
     st.session_state.sdh_id = None
     st.session_state.sdh_nazev = ""
+
+# Pokus o automatické přihlášení při načtení stránky
+nacti_trvale_prihlaseni()
 
 st.title("🚒 Portál SDH")
 st.write("Informační systém pro dobrovolné hasiče")
@@ -33,6 +50,9 @@ if st.session_state.logged_in:
         st.session_state.logged_in = False
         st.session_state.user_id = None
         st.session_state.sdh_id = None
+        # Smazání trvalého přihlášení z prohlížeče
+        if "user_id" in st.query_params:
+            del st.query_params["user_id"]
         st.rerun()
 
 # --- SEKCE PRO NEPŘIHLÁŠENÉ (PŘIHLÁŠENÍ / REGISTRACE) ---
@@ -41,12 +61,15 @@ if not st.session_state.logged_in:
     
     with tab1:
         st.subheader("Přihlášení k portálu")
-        login_email = st.text_input("E-mail", key="login_email").strip()
+        login_input = st.text_input("E-mail nebo Přezdívka", key="login_input").strip()
         login_heslo = st.text_input("Heslo", type="password", key="login_password")
+        zustat_prihlasen = st.checkbox("Zůstat přihlášen na tomto zařízení")
         
         if st.button("Přihlásit se", type="primary"):
-            if login_email and login_heslo:
-                res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").eq("email", login_email).execute()
+            if login_input and login_heslo:
+                # Hledáme uživatele buď podle e-mailu, nebo podle přezdívky
+                res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{login_input},prezdivka.eq.{login_input}").execute()
+                
                 if res.data:
                     user = res.data[0]
                     if bcrypt.checkpw(login_heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
@@ -56,12 +79,17 @@ if not st.session_state.logged_in:
                         st.session_state.user_role = user["role"]
                         st.session_state.sdh_id = user["sdh_id"]
                         st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
+                        
+                        # Pokud zaškrtnul "Zůstat přihlášen", uložíme ID do prohlížeče
+                        if zustat_prihlasen:
+                            st.query_params["user_id"] = str(user["id"])
+                            
                         st.success("Úspěšně přihlášen!")
                         st.rerun()
                     else:
                         st.error("Nesprávné heslo.")
                 else:
-                    st.error("Uživatel s tímto e-mailem neexistuje.")
+                    st.error("Uživatel s tímto údajem neexistuje.")
             else:
                 st.warning("Vyplňte prosím všechna pole.")
 
@@ -86,13 +114,14 @@ if not st.session_state.logged_in:
             
         reg_jmeno = st.text_input("Jméno")
         reg_prijmeni = st.text_input("Příjmení")
+        reg_prezdivka = st.text_input("Prezdívka (bude sloužit k rychlému přihlášení)").strip()
         reg_email = st.text_input("E-mail")
         reg_heslo = st.text_input("Heslo pro přihlášení", type="password")
         
         navrhovana_role = "velitel" if volba_sboru == "Zaregistrovat úplně nový sbor" else "člen"
         
         if st.button("Dokončit registraci"):
-            if reg_jmeno and reg_prijmeni and reg_email and reg_heslo and (vybrany_sdh_id or novy_sbor_nazev):
+            if reg_jmeno and reg_prijmeni and reg_prezdivka and reg_email and reg_heslo and (vybrany_sdh_id or novy_sbor_nazev):
                 try:
                     if volba_sboru == "Zaregistrovat úplně nový sbor":
                         sbor_ins = supabase.table("sbory").insert({"nazev_sdh": novy_sbor_nazev}).execute()
@@ -108,6 +137,7 @@ if not st.session_state.logged_in:
                         "sdh_id": vybrany_sdh_id,
                         "jmeno": reg_jmeno,
                         "prijmeni": reg_prijmeni,
+                        "prezdivka": reg_prezdivka,
                         "email": reg_email,
                         "heslo_hash": hashed,
                         "role": navrhovana_role
@@ -115,9 +145,9 @@ if not st.session_state.logged_in:
                     supabase.table("uzivatele").insert(uzivatel_data).execute()
                     st.success("Registrace proběhla úspěšně! Nyní se můžete přihlásit.")
                 except Exception as e:
-                    st.error(f"Chyba při registraci. Detaily: {e}")
+                    st.error(f"Chyba při registraci (přezdívka nebo e-mail již může existovat). Detaily: {e}")
             else:
-                st.warning("Prosím vyplňte všechny údaje.")
+                st.warning("Prosím vyplňte všechny údaje včetně přezdívky.")
 
 # --- SEKCE PRO PŘIHLÁŠENÉ UŽIVATELE ---
 else:
@@ -139,20 +169,16 @@ else:
             st.write("Zatím nejsou naplánované žádné akce.")
         else:
             for akce in akce_res.data:
-                # Zobrazení data a času přímo v záhlaví akce
                 cas_info = f" v {akce['cas']}" if akce.get('cas') else ""
                 with st.expander(f"📅 {akce['datum']}{cas_info} - {akce['nazev_akce']} ({akce['typ_akce']})"):
                     
-                    # Zobrazení poznámky, pokud existuje
                     if akce.get('poznamka'):
                         st.markdown(f"ℹ️ **Poznámka k akci:**\n> {akce['poznamka']}")
                     
-                    # Zjištění aktuální docházky
                     doch_res = supabase.table("dochazka").select("status").eq("akce_id", akce["id"]).eq("uzivatel_id", st.session_state.user_id).execute()
                     aktualni_status = doch_res.data[0]["status"] if doch_res.data else "Nezadáno"
                     st.write(f"Moje aktuální účast: **{aktualni_status}**")
                     
-                    # Tlačítka docházky
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         if st.button("Jdu 👍", key=f"ano_{akce['id']}"):
@@ -167,18 +193,14 @@ else:
                             supabase.table("dochazka").upsert({"akce_id": akce["id"], "uzivatel_id": st.session_state.user_id, "status": "Nevím"}, on_conflict="akce_id,uzivatel_id").execute()
                             st.rerun()
                     
-                    # Tlačítko pro smazání akce (vidí pouze velitel)
                     if st.session_state.user_role == "velitel":
                         st.write("---")
                         if st.button("Smazat tuto akci ❌", key=f"del_{akce['id']}", type="secondary"):
-                            # Nejdřív musíme smazat docházku navázanou na akci kvůli integritě databáze
                             supabase.table("dochazka").delete().eq("akce_id", akce["id"]).execute()
-                            # Pak smažeme samotnou akci
                             supabase.table("akce").delete().eq("id", akce["id"]).execute()
                             st.success("Akce byla smazána.")
                             st.rerun()
                     
-                    # Přehled ostatních
                     st.write("---")
                     st.write("**Přehled ostatních:**")
                     vsechna_dochazka = supabase.table("dochazka").select("status, uzivatele(jmeno, prijmeni)").eq("akce_id", akce["id"]).execute()
@@ -191,10 +213,11 @@ else:
     # --- 2. SEZNAM ČLENŮ ---
     elif volba == "Seznam členů sboru":
         st.header("🧑‍🚒 Členové sboru")
-        clenove_res = supabase.table("uzivatele").select("jmeno, prijmeni, email, role").eq("sdh_id", st.session_state.sdh_id).execute()
+        clenove_res = supabase.table("uzivatele").select("jmeno, prijmeni, email, prezdivka, role").eq("sdh_id", st.session_state.sdh_id).execute()
         if clenove_res.data:
             for c in clenove_res.data:
-                st.write(f"• **{c['jmeno']} {c['prijmeni']}** - {c['role']} ({c['email']})")
+                prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
+                st.write(f"• **{c['jmeno']} {c['prijmeni']}**{prez_info} - {c['role']} (Kontakt: {c['email']})")
 
     # --- 3. SPRÁVA SBORU (PRO VELITELE) ---
     elif volba == "🛠️ Správa sboru (Velitel)":
@@ -210,7 +233,7 @@ else:
             nova_akce_cas = st.text_input("Čas akce (např. 18:00)", placeholder="18:00")
             
         nova_akce_typ = st.selectbox("Typ akce", ["Zásah", "Cvičení", "Brigáda", "Schůze", "Soutěž", "Jiné"])
-        nova_akce_pozn = st.text_area("Poznámka k akci (nepovinné)", placeholder="Sraz v hasičárně v pracovním, po cvičení bude uzené...")
+        nova_akce_pozn = st.text_area("Poznámka k akci (nepovinné)")
         
         if st.button("Vytvořit akci a zapsat do plánu", type="primary"):
             if nova_akce_nazev:
