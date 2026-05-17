@@ -40,11 +40,28 @@ nacti_trvale_prihlaseni()
 st.title("🚒 Portál SDH")
 st.write("Informační systém pro dobrovolné hasiče")
 
-# --- ODHLÁŠENÍ ---
+# --- STRUKTURA PRO PŘIHLÁŠENÉ UŽIVATELE (BOČNÍ PANEL) ---
 if st.session_state.logged_in:
+    
+    # 1. Výběr menu a navigace (DEJ NAd VIZITKU PŘIHLÁŠENÍ)
+    menu = ["Plán akcí & Docházka", "Seznam členů sboru"]
+    
+    # Kontrola, zda uživatel obsahuje roli Správce (kontroluje text na začátku)
+    je_spravce = st.session_state.user_role.startswith("Správce")
+    
+    if je_spravce:
+        menu.append("🛠️ Správa sboru (Správce)")
+    else:
+        menu.append("⚙️ Moje nastavení")
+        
+    volba = st.sidebar.selectbox("Kam chcete jít?", menu)
+    st.sidebar.write("---")
+    
+    # 2. Informace o přihlášeném uživateli (AŽ DOLE POD MENU)
     st.sidebar.markdown(f"**Přihlášen:** {st.session_state.user_jmeno}")
     st.sidebar.markdown(f"**Sbor:** {st.session_state.sdh_nazev}")
     st.sidebar.markdown(f"**Pozice/Role:** {st.session_state.user_role}")
+    
     if st.sidebar.button("Odhlásit se"):
         st.session_state.logged_in = False
         st.session_state.user_id = None
@@ -112,13 +129,17 @@ if not st.session_state.logged_in:
         reg_email = st.text_input("E-mail")
         reg_heslo = st.text_input("Heslo pro přihlášení", type="password")
         
-        # Výběr pozice - slovo velitel kompletně odstraněno
+        # Seznam pozic na útoku
+        pozice_na_utoku = ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
+        
+        # Výběr pozice - upraveno tak, aby i zakladatel sboru měl svou pozici
         if volba_sboru == "Zaregistrovat úplně nový sbor":
-            st.info("Jako zakladatel sboru budete automaticky nastaven jako **Správce**.")
-            vybrana_role = "Správce"
+            st.info("Jako zakladatel sboru získáte automaticky oprávnění **Správce**.")
+            moje_pozice_zakladatel = st.selectbox("Vyberte vaši soutěžní pozici ve sboru:", pozice_na_utoku, key="zakl_pozice")
+            vybrana_role = f"Správce + {moje_pozice_zakladatel}"
         else:
-            vybrana_role = st.selectbox("Vyberte vaši hlavní pozici ve sboru:", 
-                                        ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"])
+            moje_pozice_clen = st.selectbox("Vyberte vaši hlavní pozici ve sboru:", pozice_na_utoku, key="clen_pozice")
+            vybrana_role = moje_pozice_clen
         
         if st.button("Dokončit registraci"):
             if reg_jmeno and reg_prijmeni and reg_email and reg_heslo and (vybrany_sdh_id or novy_sbor_nazev):
@@ -149,18 +170,8 @@ if not st.session_state.logged_in:
             else:
                 st.warning("Prosím vyplňte všechny údaje.")
 
-# --- SEKCE PRO PŘIHLÁŠENÉ UŽIVATELE ---
-else:
-    st.info(f"Vítej v portálu pro **{st.session_state.sdh_nazev}**!")
-    
-    menu = ["Plán akcí & Docházka", "Seznam členů sboru"]
-    
-    if st.session_state.user_role == "Správce":
-        menu.append("🛠️ Správa sboru (Správce)")
-    else:
-        menu.append("⚙️ Moje nastavení")
-        
-    volba = st.sidebar.selectbox("Kam chceš jít?", menu)
+# --- OBSAH STRÁNEK PRO PŘIHLÁŠENÉ ---
+elif st.session_state.logged_in:
     
     # --- 1. PLÁN AKCÍ & DOCHÁZKA ---
     if volba == "Plán akcí & Docházka":
@@ -196,7 +207,7 @@ else:
                             supabase.table("dochazka").upsert({"akce_id": akce["id"], "uzivatel_id": st.session_state.user_id, "status": "Nevím"}, on_conflict="akce_id,uzivatel_id").execute()
                             st.rerun()
                     
-                    if st.session_state.user_role == "Správce":
+                    if je_spravce:
                         st.write("---")
                         if st.button("Smazat tuto akci ❌", key=f"del_{akce['id']}", type="secondary"):
                             supabase.table("dochazka").delete().eq("akce_id", akce["id"]).execute()
@@ -226,7 +237,6 @@ else:
     elif volba == "⚙️ Moje nastavení":
         st.header("⚙️ Moje osobní nastavení")
         
-        # Načtení aktuálních dat přihlášeného uživatele
         u_aktualni = supabase.table("uzivatele").select("prezdivka, role").eq("id", st.session_state.user_id).execute()
         strav_prezdivka = u_aktualni.data[0]["prezdivka"] if u_aktualni.data and u_aktualni.data[0]["prezdivka"] else ""
         strav_role = u_aktualni.data[0]["role"] if u_aktualni.data else "člen"
@@ -236,10 +246,7 @@ else:
         
         st.subheader("2. Moje pozice v týmu")
         seznam_pozic = ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
-        # Pokud je uživatel náhodou Správce (přesunut sem), přidáme možnost do seznamu, aby to nespadlo
-        if strav_role == "Správce":
-            seznam_pozic.insert(0, "Správce")
-            
+        
         index_role = seznam_pozic.index(strav_role) if strav_role in seznam_pozic else 7
         nova_role = st.selectbox("Moje hlavní pozice na útoku:", seznam_pozic, index=index_role)
         
@@ -262,7 +269,7 @@ else:
     elif volba == "🛠️ Správa sboru (Správce)":
         st.header("🛠️ Administrace sboru (Pouze Správce)")
         
-        tab_akce, tab_clenove, tab_moje = st.tabs(["➕ Přidat akci", "⚙️ Správa členů a pozic", "👤 Moje vlastní nastavení"])
+        tab_akce, tab_clenove, tab_moje = st.tabs(["➕ Přidat akci", "⚙️ Správa členů a pozic", "👤 Moje vlastní nastavení Správce"])
         
         with tab_akce:
             st.subheader("Přidat novou akci")
@@ -292,7 +299,7 @@ else:
                     st.warning("Vyplňte název akce.")
                     
         with tab_clenove:
-            st.subheader("Změna pozic členů sboru (pohled Správce)")
+            st.subheader("Změna pozic členů sboru")
             cl_res = supabase.table("uzivatele").select("id, jmeno, prijmeni, role").eq("sdh_id", st.session_state.sdh_id).execute()
             
             if cl_res.data:
@@ -300,8 +307,9 @@ else:
                 vybrany_cl_text = st.selectbox("Vyberte člena pro změnu:", list(slovnik_clenu.keys()))
                 vybrany_uzivatel = slovnik_clenu[vybrany_cl_text]
                 
-                nova_pozice_admin = st.selectbox("Přiřadit novou pozici tomuto členovi:", 
-                                           ["Správce", "strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"])
+                # Výběrové políčko pro admina - umožňuje přiřadit buď čisté pozice nebo Správce kombinace
+                nova_pozice_admin = st.selectbox("Přiřadit novou pozici/práva tomuto členovi:", 
+                                           ["Správce + strojník", "Správce + koš", "Správce + rozdělovač", "Správce + levý proud", "Správce + pravý proud", "Správce + béčka", "Správce + spoj", "Správce + člen", "strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"])
                 
                 if st.button("Uložit pozici členovi"):
                     supabase.table("uzivatele").update({"role": nova_pozice_admin}).eq("id", vybrany_uzivatel["id"]).execute()
@@ -314,13 +322,14 @@ else:
             st.subheader("Osobní nastavení Správce")
             u_aktualni = supabase.table("uzivatele").select("prezdivka, role").eq("id", st.session_state.user_id).execute()
             strav_prezdivka = u_aktualni.data[0]["prezdivka"] if u_aktualni.data and u_aktualni.data[0]["prezdivka"] else ""
-            strav_role = u_aktualni.data[0]["role"] if u_aktualni.data else "Správce"
+            strav_role = u_aktualni.data[0]["role"] if u_aktualni.data else "Správce + člen"
             
             nova_prez_spr = st.text_input("Moje přezdívka (pro login místo emailu):", value=strav_prezdivka, key="spr_prez").strip()
             
-            seznam_pozic_spr = ["Správce", "strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
-            index_role_spr = seznam_pozic_spr.index(strav_role) if strav_role in seznam_pozic_spr else 0
-            nova_role_spr = st.selectbox("Moje vlastní pozice v týmu:", seznam_pozic_spr, index=index_role_spr, key="spr_role")
+            # Seznam pro vlastního správce
+            seznam_pozic_spr = ["Správce + strojník", "Správce + koš", "Správce + rozdělovač", "Správce + levý proud", "Správce + pravý proud", "Správce + béčka", "Správce + spoj", "Správce + člen"]
+            index_role_spr = seznam_pozic_spr.index(strav_role) if strav_role in seznam_pozic_spr else 7
+            nova_role_spr = st.selectbox("Moje vlastní soutěžní pozice:", seznam_pozic_spr, index=index_role_spr, key="spr_role")
             
             if st.button("Uložit moje nastavení správce"):
                 try:
