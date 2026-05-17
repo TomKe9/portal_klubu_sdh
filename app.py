@@ -65,7 +65,6 @@ if not st.session_state.logged_in:
         
         if st.button("Přihlásit se", type="primary"):
             if login_input and login_heslo:
-                # Přihlášení funguje jak přes e-mail, tak přes zadanou přezdívku
                 res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{login_input},prezdivka.eq.{login_input}").execute()
                 if res.data:
                     user = res.data[0]
@@ -85,7 +84,7 @@ if not st.session_state.logged_in:
                     else:
                         st.error("Nesprávné heslo.")
                 else:
-                    st.error("Uživatel s tímto údajem neexistuje.")
+                    st.error("Uživatel s tímto údajems neexistuje.")
             else:
                 st.warning("Vyplňte prosím všechna pole.")
 
@@ -113,7 +112,7 @@ if not st.session_state.logged_in:
         reg_email = st.text_input("E-mail")
         reg_heslo = st.text_input("Heslo pro přihlášení", type="password")
         
-        # Registrace je čistá, přezdívka a pozice se zadávají až uvnitř systému
+        # Výběr pozice - slovo velitel kompletně odstraněno
         if volba_sboru == "Zaregistrovat úplně nový sbor":
             st.info("Jako zakladatel sboru budete automaticky nastaven jako **Správce**.")
             vybrana_role = "Správce"
@@ -141,7 +140,7 @@ if not st.session_state.logged_in:
                         "email": reg_email,
                         "heslo_hash": hashed,
                         "role": vybrana_role,
-                        "prezdivka": None  # Přezdívka je při registraci prázdná
+                        "prezdivka": None
                     }
                     supabase.table("uzivatele").insert(uzivatel_data).execute()
                     st.success("Registrace proběhla úspěšně! Nyní se můžete přihlásit.")
@@ -156,7 +155,6 @@ else:
     
     menu = ["Plán akcí & Docházka", "Seznam členů sboru"]
     
-    # Rozlišení menu pro Správce a řadové členy
     if st.session_state.user_role == "Správce":
         menu.append("🛠️ Správa sboru (Správce)")
     else:
@@ -227,36 +225,48 @@ else:
     # --- 3. MOJE NASTAVENÍ (PRO ŘADOVÉ ČLENY) ---
     elif volba == "⚙️ Moje nastavení":
         st.header("⚙️ Moje osobní nastavení")
-        st.write("Zde si můžete nastavit svou přezdívku pro snadnější přihlašování.")
         
-        # Načteme aktuální přezdívku uživatele
-        u_aktualni = supabase.table("uzivatele").select("prezdivka").eq("id", st.session_state.user_id).execute()
+        # Načtení aktuálních dat přihlášeného uživatele
+        u_aktualni = supabase.table("uzivatele").select("prezdivka, role").eq("id", st.session_state.user_id).execute()
         strav_prezdivka = u_aktualni.data[0]["prezdivka"] if u_aktualni.data and u_aktualni.data[0]["prezdivka"] else ""
+        strav_role = u_aktualni.data[0]["role"] if u_aktualni.data else "člen"
         
-        nova_prez = st.text_input("Moje přezdívka (namísto emailu při loginu):", value=strav_prezdivka).strip()
+        st.subheader("1. Uživatelská přezdívka")
+        nova_prez = st.text_input("Moje přezdívka (pro login místo emailu):", value=strav_prezdivka).strip()
         
-        if st.button("Uložit nastavení přezdívky"):
-            if nova_prez == "":
-                supabase.table("uzivatele").update({"prezdivka": None}).eq("id", st.session_state.user_id).execute()
-                st.success("Přezdívka byla odebrána.")
+        st.subheader("2. Moje pozice v týmu")
+        seznam_pozic = ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
+        # Pokud je uživatel náhodou Správce (přesunut sem), přidáme možnost do seznamu, aby to nespadlo
+        if strav_role == "Správce":
+            seznam_pozic.insert(0, "Správce")
+            
+        index_role = seznam_pozic.index(strav_role) if strav_role in seznam_pozic else 7
+        nova_role = st.selectbox("Moje hlavní pozice na útoku:", seznam_pozic, index=index_role)
+        
+        if st.button("Uložit změny v nastavení", type="primary"):
+            try:
+                zmeny = {"role": nova_role}
+                if nova_prez == "":
+                    zmeny["prezdivka"] = None
+                else:
+                    zmeny["prezdivka"] = nova_prez
+                
+                supabase.table("uzivatele").update(zmeny).eq("id", st.session_state.user_id).execute()
+                st.session_state.user_role = nova_role
+                st.success("Nastavení bylo úspěšně uloženo!")
                 st.rerun()
-            else:
-                try:
-                    supabase.table("uzivatele").update({"prezdivka": nova_prez}).eq("id", st.session_state.user_id).execute()
-                    st.success(f"Přezdívka '{nova_prez}' byla úspěšně uložena! Příště ji můžete použít k přihlášení.")
-                    st.rerun()
-                except Exception as e:
-                    st.error("Tato přezdívka je již obsazená někým jiným. Zvolte prosím jinou.")
+            except Exception as e:
+                st.error("Nepodařilo se uložit. Zkontrolujte, zda zvolenou přezdívku už nepoužívá jiný člen.")
 
     # --- 4. SPRÁVA SBORU (PRO SPRÁVCE) ---
     elif volba == "🛠️ Správa sboru (Správce)":
         st.header("🛠️ Administrace sboru (Pouze Správce)")
         
-        tab_akce, tab_clenove, tab_moje = st.tabs(["➕ Přidat akci", "⚙️ Správa členů a pozic", "👤 Moje vlastní přezdívka"])
+        tab_akce, tab_clenove, tab_moje = st.tabs(["➕ Přidat akci", "⚙️ Správa členů a pozic", "👤 Moje vlastní nastavení"])
         
         with tab_akce:
             st.subheader("Přidat novou akci")
-            nova_akce_nazev = st.text_input("Název akce (např. Trénink na soutěž)")
+            nova_akce_nazev = st.text_input("Název akce")
             c1, c2 = st.columns(2)
             with c1:
                 nova_akce_datum = st.date_input("Datum akce", datetime.date.today())
@@ -282,39 +292,47 @@ else:
                     st.warning("Vyplňte název akce.")
                     
         with tab_clenove:
-            st.subheader("Změna pozic členů sboru")
+            st.subheader("Změna pozic členů sboru (pohled Správce)")
             cl_res = supabase.table("uzivatele").select("id, jmeno, prijmeni, role").eq("sdh_id", st.session_state.sdh_id).execute()
             
             if cl_res.data:
                 slovnik_clenu = {f"{u['jmeno']} {u['prijmeni']} (aktuálně: {u['role']})": u for u in cl_res.data}
-                vybrany_cl_text = st.selectbox("Vyberte člena pro změnu pozice:", list(slovnik_clenu.keys()))
+                vybrany_cl_text = st.selectbox("Vyberte člena pro změnu:", list(slovnik_clenu.keys()))
                 vybrany_uzivatel = slovnik_clenu[vybrany_cl_text]
                 
-                nova_pozice = st.selectbox("Přiřadit novou pozici:", 
+                nova_pozice_admin = st.selectbox("Přiřadit novou pozici tomuto členovi:", 
                                            ["Správce", "strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"])
                 
-                if st.button("Uložit novou pozici"):
-                    supabase.table("uzivatele").update({"role": nova_pozice}).eq("id", vybrany_uzivatel["id"]).execute()
-                    st.success(f"Pozice uživatele byla úspěšně změněna na {nova_pozice}!")
+                if st.button("Uložit pozici členovi"):
+                    supabase.table("uzivatele").update({"role": nova_pozice_admin}).eq("id", vybrany_uzivatel["id"]).execute()
+                    st.success("Pozice byla úspěšně změněna!")
                     if vybrany_uzivatel["id"] == st.session_state.user_id:
-                        st.session_state.user_role = nova_pozice
+                        st.session_state.user_role = nova_pozice_admin
                     st.rerun()
                     
         with tab_moje:
-            st.subheader("Nastavení přezdívky pro Správce")
-            u_aktualni = supabase.table("uzivatele").select("prezdivka").eq("id", st.session_state.user_id).execute()
+            st.subheader("Osobní nastavení Správce")
+            u_aktualni = supabase.table("uzivatele").select("prezdivka, role").eq("id", st.session_state.user_id).execute()
             strav_prezdivka = u_aktualni.data[0]["prezdivka"] if u_aktualni.data and u_aktualni.data[0]["prezdivka"] else ""
+            strav_role = u_aktualni.data[0]["role"] if u_aktualni.data else "Správce"
             
-            nova_prez_spr = st.text_input("Zadej svou přezdívku (pro přihlášení místo emailu):", value=strav_prezdivka, key="spr_prez").strip()
-            if st.button("Uložit přezdívku správce"):
-                if nova_prez_spr == "":
-                    supabase.table("uzivatele").update({"prezdivka": None}).eq("id", st.session_state.user_id).execute()
-                    st.success("Přezdívka byla odebrána.")
+            nova_prez_spr = st.text_input("Moje přezdívka (pro login místo emailu):", value=strav_prezdivka, key="spr_prez").strip()
+            
+            seznam_pozic_spr = ["Správce", "strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
+            index_role_spr = seznam_pozic_spr.index(strav_role) if strav_role in seznam_pozic_spr else 0
+            nova_role_spr = st.selectbox("Moje vlastní pozice v týmu:", seznam_pozic_spr, index=index_role_spr, key="spr_role")
+            
+            if st.button("Uložit moje nastavení správce"):
+                try:
+                    zmeny_spr = {"role": nova_role_spr}
+                    if nova_prez_spr == "":
+                        zmeny_spr["prezdivka"] = None
+                    else:
+                        zmeny_spr["prezdivka"] = nova_prez_spr
+                        
+                    supabase.table("uzivatele").update(zmeny_spr).eq("id", st.session_state.user_id).execute()
+                    st.session_state.user_role = nova_role_spr
+                    st.success("Vaše nastavení bylo uloženo!")
                     st.rerun()
-                else:
-                    try:
-                        supabase.table("uzivatele").update({"prezdivka": nova_prez_spr}).eq("id", st.session_state.user_id).execute()
-                        st.success(f"Přezdívka '{nova_prez_spr}' uložena!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Tato přezdívka už v systému existuje. Zvolte prosím jinou.")
+                except Exception as e:
+                    st.error("Tato přezdívka už v systému existuje. Zvolte prosím jinou.")
