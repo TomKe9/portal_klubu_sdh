@@ -370,16 +370,26 @@ elif st.session_state.logged_in:
                 priorita = st.checkbox("Označit jako DŮLEŽITÉ (Zvýrazněné)")
                 if st.button("Vyvěsit na nástěnku"):
                     if nadpis_zpr and text_zpr:
-                        supabase.table("nastenka").insert({
-                            "sdh_id": st.session_state.sdh_id, "autor_jmeno": st.session_state.user_jmeno,
-                            "nadpis": nadpis_zpr, "text": text_zpr, "dulezite": priorita
-                        }).execute()
-                        st.success("Oznámení publikováno.")
-                        st.rerun()
+                        try:
+                            supabase.table("nastenka").insert({
+                                "sdh_id": st.session_state.sdh_id, "autor_jmeno": st.session_state.user_jmeno,
+                                "nadpis": nadpis_zpr, "text": text_zpr, "dulezite": priorita
+                            }).execute()
+                            st.success("Oznámení publikováno.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Nepodařilo se zapsat oznámení do tabulky 'nastenka'. Prověřte RLS nebo zda tabulka existuje. Detail: {e}")
         st.write("---")
-        zpravy_res = supabase.table("nastenka").select("*").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=True).execute()
-        if zpravy_res.data:
-            for z in zpravy_res.data:
+        
+        zpravy_data = []
+        try:
+            zpravy_res = supabase.table("nastenka").select("*").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=True).execute()
+            zpravy_data = zpravy_res.data if zpravy_res.data else []
+        except Exception as e:
+            st.error(f"Chyba při načítání nástěnky: {e}")
+            
+        if zpravy_data:
+            for z in zpravy_data:
                 if z["dulezite"]:
                     st.error(f"🚨 **{z['nadpis']}** (DŮLEŽITÉ OZNÁMENÍ)")
                 else:
@@ -474,9 +484,15 @@ elif st.session_state.logged_in:
         
         with tab_vlastni_oop:
             st.subheader("Položky, které máte aktuálně v držení:")
-            moje_oop = supabase.table("sklad").select("*").eq("prideleno_uzivatel_id", st.session_state.user_id).execute()
-            if moje_oop.data:
-                for item in moje_oop.data:
+            moje_oop_data = []
+            try:
+                moje_oop = supabase.table("sklad").select("*").eq("prideleno_uzivatel_id", st.session_state.user_id).execute()
+                moje_oop_data = moje_oop.data if moje_oop.data else []
+            except Exception as e:
+                st.error(f"Nepodařilo se načíst váš materiál z tabulky 'sklad': {e}")
+                
+            if moje_oop_data:
+                for item in moje_oop_data:
                     st.info(f"🧥 **{item['nazev']}** | Velikost: `{item['velikost']}` | Stav: *{item['stav']}*")
             else:
                 st.write("Nemáte přiřazenou žádnou výstroj.")
@@ -490,19 +506,28 @@ elif st.session_state.logged_in:
                     n_uziv = st.selectbox("Přiřadit rovnou hasiči:", ["Ponechat skladem"] + list(slovnik_clenu_sklad.keys()))
                     
                     if st.button("Uložit položku"):
-                        prirazeno_id = None if n_uziv == "Ponechat skladem" else slovnik_clenu_sklad[n_uziv]
-                        supabase.table("sklad").insert({
-                            "sdh_id": st.session_state.sdh_id, "nazev": n_mat, "velikost": n_vel,
-                            "stav": n_stav, "prideleno_uzivatel_id": prirazeno_id
-                        }).execute()
-                        st.success("Uloženo.")
-                        st.rerun()
+                        try:
+                            prirazeno_id = None if n_uziv == "Ponechat skladem" else slovnik_clenu_sklad[n_uziv]
+                            supabase.table("sklad").insert({
+                                "sdh_id": st.session_state.sdh_id, "nazev": n_mat, "velikost": n_vel,
+                                "stav": n_stav, "prideleno_uzivatel_id": prirazeno_id
+                            }).execute()
+                            st.success("Uloženo.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Chyba při zápisu do tabulky 'sklad': {e}")
                 st.write("---")
             
             st.subheader("Celkový přehled skladu")
-            vsechen_sklad = supabase.table("sklad").select("*, uzivatele(jmeno, prijmeni)").eq("sdh_id", st.session_state.sdh_id).execute()
-            if vsechen_sklad.data:
-                for i in vsechen_sklad.data:
+            vsechen_sklad_data = []
+            try:
+                vsechen_sklad = supabase.table("sklad").select("*, uzivatele(jmeno, prijmeni)").eq("sdh_id", st.session_state.sdh_id).execute()
+                vsechen_sklad_data = vsechen_sklad.data if vsechen_sklad.data else []
+            except Exception as e:
+                st.error(f"Nelze načíst celkový přehled skladu: {e}")
+                
+            if vsechen_sklad_data:
+                for i in vsechen_sklad_data:
                     drzitel = f"👤 Vydáno: {i['uzivatele']['jmeno']} {i['uzivatele']['prijmeni']}" if i.get('uzivatele') else "📦 Skladem"
                     st.write(f"**{i['nazev']}** (Velikost: {i['velikost']}) — `{i['stav']}` — **{drzitel}**")
                     if je_spravce:
@@ -510,10 +535,13 @@ elif st.session_state.logged_in:
                             supabase.table("sklad").delete().eq("id", i['id']).execute()
                             st.rerun()
 
-    # --- 6. MODUL: MAPA VODNÍCH ZDROJŮ ---
+    # --- 6. MODUL: MAPA VODNÍCH ZDROJŮ (ZABEZPEČENO PROTI CHYBÁM) ---
     elif volba == "🗺️ Mapa vodních zdrojů":
         st.header("🗺️ Hydrantová síť a zdroje hasební vody")
-        if je_spravce:
+        
+        aktuální_sbor_id = st.session_state.get("sdh_id")
+        
+        if je_spravce and aktuální_sbor_id:
             with st.expander("➕ Zadat nový vodní zdroj (Hydrant / Nádrž)"):
                 v_nazev = st.text_input("Název/Lokace (např. Hydrant u školy)")
                 v_typ = st.selectbox("Typ zdroje", ["Nadzemní hydrant", "Podzemní hydrant", "Požární nádrž", "Suchovod", "Přírodní zdroj"])
@@ -522,26 +550,45 @@ elif st.session_state.logged_in:
                 v_lon = st.number_input("Zeměpisná délka (Longitude, např. 16.12345)", format="%.5f")
                 if st.button("Uložit bod do mapy"):
                     if v_nazev and v_lat != 0:
-                        supabase.table("vodni_zdroje").insert({
-                            "sdh_id": st.session_state.sdh_id, "nazev": v_nazev, "typ": v_typ,
-                            "stav": v_stav, "latitude": v_lat, "longitude": v_lon
-                        }).execute()
-                        st.success("Bod úspěšně zanesen.")
-                        st.rerun()
+                        try:
+                            supabase.table("vodni_zdroje").insert({
+                                "sdh_id": aktuální_sbor_id, "nazev": v_nazev, "typ": v_typ,
+                                "stav": v_stav, "latitude": v_lat, "longitude": v_lon
+                            }).execute()
+                            st.success("Bod úspěšně zanesen.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Nepodařilo se uložit bod. Prověřte strukturu tabulky a vypněte RLS. Detaily: {e}")
         st.write("---")
-        zdroje_res = supabase.table("vodni_zdroje").select("*").eq("sdh_id", st.session_state.sdh_id).execute()
-        if zdroje_res.data:
-            df_mapa = pd.DataFrame(zdroje_res.data)
-            st.map(df_mapa, latitude="latitude", longitude="longitude")
-            st.write("Seznam bodů:")
-            for z in zdroje_res.data:
-                st.write(f"📍 **{z['nazev']}** ({z['typ']}) — Stav: `{z['stav']}` [GPS: {z['latitude']}, {z['longitude']}]")
-                if je_spravce:
-                    if st.button("Smazat bod 🗑️", key=f"del_map_{z['id']}"):
-                        supabase.table("vodni_zdroje").delete().eq("id", z['id']).execute()
-                        st.rerun()
+        
+        zdroje_data = []
+        if aktuální_sbor_id:
+            try:
+                zdroje_res = supabase.table("vodni_zdroje").select("*").eq("sdh_id", aktuální_sbor_id).execute()
+                zdroje_data = zdroje_res.data if zdroje_res.data else []
+            except Exception as e:
+                st.error("⚠️ Systémová chyba: Nepodařilo se komunikovat s tabulkou 'vodni_zdroje'.")
+                st.info("Krok k nápravě: V Supabase u této tabulky zvolte možnost 'Disable RLS' a ujistěte se, že jste v SQL Editoru spustili skript pro její vytvoření.")
+                st.error(f"Technický kód chyby ze serveru: {e}")
         else:
-            st.info("Zatím nebyly mapové body zadány.")
+            st.warning("Relace vypršela. Odhlaste se a znovu přihlaste.")
+
+        if zdroje_data:
+            try:
+                df_mapa = pd.DataFrame(zdroje_data)
+                st.map(df_mapa, latitude="latitude", longitude="longitude")
+                
+                st.write("Seznam bodů:")
+                for z in zdroje_data:
+                    st.write(f"📍 **{z['nazev']}** ({z['typ']}) — Stav: `{z['stav']}` [GPS: {z['latitude']}, {z['longitude']}]")
+                    if je_spravce:
+                        if st.button("Smazat bod 🗑️", key=f"del_map_{z['id']}"):
+                            supabase.table("vodni_zdroje").delete().eq("id", z['id']).execute()
+                            st.rerun()
+            except Exception as map_err:
+                st.error(f"Chyba zpracování mapových dat: {map_err}")
+        else:
+            st.info("Zatím nebyly žádné mapové body pro váš sbor v databázi nalezeny.")
 
     # --- 7. MODUL: KVALIFIKACE & ŠKOLENÍ ---
     elif volba == "🎖️ Kvalifikace & Odbornost":
@@ -555,16 +602,24 @@ elif st.session_state.logged_in:
                 k_typ = st.selectbox("Typ osvědčení / Kurzu", ["Zdravotní prohlídka", "Nositel dýchací techniky (NDT)", "Strojník (C, profesák)", "Velitel družstva / sboru", "Základní kurz hasiče (40h)"])
                 k_datum = st.date_input("Platnost DO:")
                 if st.button("Uložit/Aktualizovat kvalifikaci"):
-                    supabase.table("kvalifikace").upsert({
-                        "uzivatel_id": slovnik_hasicu[k_hasic], "typ_kurzu": k_typ, "platnost_do": str(k_datum)
-                    }, on_conflict="uzivatel_id,typ_kurzu").execute()
-                    st.success("Kvalifikace zapsána.")
-                    st.rerun()
+                    try:
+                        supabase.table("kvalifikace").upsert({
+                            "uzivatel_id": slovnik_hasicu[k_hasic], "typ_kurzu": k_typ, "platnost_do": str(k_datum)
+                        }, on_conflict="uzivatel_id,typ_kurzu").execute()
+                        st.success("Kvalifikace zapsána.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Zápis do 'kvalifikace' selhal: {e}")
         st.write("---")
         st.subheader("Aktuální stav platnosti kurzů ve sboru:")
-        vsechny_kval = supabase.table("kvalifikace").select("*, uzivatele(jmeno, prijmeni, sdh_id)").execute()
-        filtrovane_kval = [k for k in vsechny_kval.data if k.get("uzivatele") and k["uzivatele"]["sdh_id"] == st.session_state.sdh_id] if vsechny_kval.data else []
         
+        filtrovane_kval = []
+        try:
+            vsechny_kval = supabase.table("kvalifikace").select("*, uzivatele(jmeno, prijmeni, sdh_id)").execute()
+            filtrovane_kval = [k for k in vsechny_kval.data if k.get("uzivatele") and k["uzivatele"]["sdh_id"] == st.session_state.sdh_id] if vsechny_kval.data else []
+        except Exception as e:
+            st.error(f"Nepodařilo se přečíst data kvalifikací: {e}")
+            
         if filtrovane_kval:
             dnesni_den = datetime.date.today()
             for k in filtrovane_kval:
