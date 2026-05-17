@@ -7,7 +7,7 @@ from PIL import Image
 import io
 import json
 import os
-# NOVÁ KNIHOVNA PRO KALENDÁŘ
+# Knihovna pro kalendář
 from streamlit_calendar import calendar
 
 # 1. Propojení se Supabase pomocí Secrets
@@ -245,11 +245,11 @@ elif st.session_state.logged_in:
         
         akce_res = supabase.table("akce").select("*").eq("sdh_id", st.session_state.sdh_id).order("datum").execute()
         
-        # --- NOVINKA: INTEGRACE KALENDÁŘE ---
+        # --- INTEGRACE KALENDÁŘE ---
         st.subheader("🗓️ Kalendářní přehled")
         kalendar_udalosti = []
         
-        # Výběr barev pro různé typy akcí, aby to bylo přehledné
+        # Výběr barev pro různé typy akcí
         barvy_akci = {
             "Zásah": "#d32f2f",      # Červená
             "Cvičení": "#1976d2",    # Modrá
@@ -271,7 +271,7 @@ elif st.session_state.logged_in:
                     "allDay": True
                 })
         
-        # Nastavení vzhledu kalendáře (česky a měsíční pohled)
+        # Nastavení vzhledu kalendáře (česky, měsíční pohled a start v PONDĚLÍ)
         kalendar_options = {
             "headerToolbar": {
                 "left": "prev,next today",
@@ -279,7 +279,8 @@ elif st.session_state.logged_in:
                 "right": "dayGridMonth,listMonth"
             },
             "initialView": "dayGridMonth",
-            "locale": "cs"
+            "locale": "cs",
+            "firstDay": 1  # NASTAVENO: Týden začíná pondělím! 📅
         }
         
         # Vykreslení kalendáře
