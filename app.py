@@ -289,16 +289,18 @@ elif st.session_state.logged_in:
                     else:
                         st.caption("Zatím nikdo nevyplnil docházku.")
 
-    # --- 2. SEZNAM ČLENŮ ---
+    # --- 2. SEZNAM ČLENŮ (UPRAVENO - ODSTRANĚN EMAIL) ---
     elif volba == "Seznam členů sboru":
         st.header("🧑‍🚒 Členové sboru")
-        clenove_res = supabase.table("uzivatele").select("id, jmeno, prijmeni, email, prezdivka, role").eq("sdh_id", st.session_state.sdh_id).execute()
+        # E-mail už zde vůbec netaháme z databáze
+        clenove_res = supabase.table("uzivatele").select("id, jmeno, prijmeni, prezdivka, role").eq("sdh_id", st.session_state.sdh_id).execute()
         if clenove_res.data:
             for c in clenove_res.data:
                 prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
                 cl_av = ziskej_avatar_uzivatele(c["id"])
                 av_mini = zobraz_profilovku(cl_av)
-                st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 8px;">{av_mini}<span><b>{c["jmeno"]} {c["prijmeni"]}</b>{prez_info} — <code>{c["role"]}</code> (Kontakt: {c["email"]})</span></div>', unsafe_allow_html=True)
+                # Vypsáno čistě bez kontaktu
+                st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 8px;">{av_mini}<span><b>{c["jmeno"]} {c["prijmeni"]}</b>{prez_info} — <code>{c["role"]}</code></span></div>', unsafe_allow_html=True)
 
     # --- 3. MOJE NASTAVENÍ ---
     elif volba == "Moje nastavení":
@@ -352,10 +354,7 @@ elif st.session_state.logged_in:
                         "prezdivka": nova_prez if nova_prez != "" else None
                     }
                     
-                    # Opraveno: Správný update v Supabase bez překlepů
                     supabase.table("uzivatele").update(zmeny).eq("id", st.session_state.user_id).execute()
-                    
-                    # Uložíme profilovku lokálně do souboru (Supabase vůbec netřeba otravovat)
                     uloz_avatar_uzivatele(st.session_state.user_id, vysledny_avatar)
                     
                     st.session_state.user_role = nova_role
