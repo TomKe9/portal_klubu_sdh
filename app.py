@@ -34,6 +34,7 @@ if "logged_in" not in st.session_state:
     st.session_state.user_role = "člen"
     st.session_state.sdh_id = None
     st.session_state.sdh_nazev = ""
+    st.session_state.stranka = "Plán akcí & Docházka"  # Výchozí stránka po přihlášení
 
 nacti_trvale_prihlaseni()
 
@@ -44,35 +45,55 @@ st.write("Informační systém pro dobrovolné hasiče")
 if st.session_state.logged_in:
     
     # Zjištění, zda jsi zakladatel sboru (Správce systému)
-    # První registrovaný uživatel k danému sboru má u nás status správce sboru
     je_spravce = False
     vlastnik_res = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=False).limit(1).execute()
     if vlastnik_res.data and vlastnik_res.data[0]["id"] == st.session_state.user_id:
         je_spravce = True
-    
-    # 1. MENU JE ÚPLNĚ NAHOŘE
-    menu = ["Plán akcí & Docházka", "Seznam členů sboru", "⚙️ Moje nastavení"]
-    
-    if je_spravce:
-        menu.append("🛠️ Správa sboru (Správce)")
+
+    # 1. SAMOSTATNÉ TLAČÍTKO "MOJE NASTAVENÍ" ÚPLNĚ NAHOŘE
+    if st.sidebar.button("⚙️ Moje nastavení", use_container_width=True):
+        st.session_state.stranka = "Moje nastavení"
+        st.rerun()
         
-    volba = st.sidebar.selectbox("Kam chcete jít?", menu)
     st.sidebar.write("---")
     
-    # 2. VIZITKA PŘIHLÁŠENÍ JE DOLE POD MENU
+    # 2. VIZITKA PŘIHLÁŠENÍ (UPROSTŘED)
     st.sidebar.markdown(f"**Přihlášen:** {st.session_state.user_jmeno}")
     st.sidebar.markdown(f"**Sbor:** {st.session_state.sdh_nazev}")
     
-    # Zobrazení pozice na venek + příznak správce pro tebe
     zobrazeni_role = st.session_state.user_role
     if je_spravce:
         zobrazeni_role += " (Správce sboru)"
     st.sidebar.markdown(f"**Pozice:** {zobrazeni_role}")
     
-    if st.sidebar.button("Odhlásit se"):
+    st.sidebar.write("---")
+    
+    # 3. ROZBALOVACÍ MENU "KAM CHCETE JÍT?" (AŽ POD VIZITKOU)
+    menu_moznosti = ["Plán akcí & Docházka", "Seznam členů sboru"]
+    if je_spravce:
+        menu_moznosti.append("🛠️ Správa sboru (Správce)")
+        
+    # Pokud jsme v Nastavení, nastavíme index na None nebo držíme výběr, aby to nemátlo
+    index_vypoctu = 0
+    if st.session_state.stranka in menu_moznosti:
+        index_vypoctu = menu_moznosti.index(st.session_state.stranka)
+        
+    volba_menu = st.sidebar.selectbox("Kam chcete jít?", menu_moznosti, index=index_vypoctu)
+    
+    # Pokud uživatel klikne do selectboxu, přepneme stránku z Nastavení pryč
+    if st.session_state.stranka != "Moje nastavení" or volba_menu != menu_moznosti[index_vypoctu]:
+        if st.session_state.stranka != "Moje nastavení" or st.sidebar.button("Přejít na vybranou stránku", key="btn_prechod"):
+            st.session_state.stranka = volba_menu
+
+    # Bereme finální volbu pro zobrazení obsahu
+    volba = st.session_state.stranka
+    
+    st.sidebar.write("---")
+    if st.sidebar.button("Odhlásit se", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.user_id = None
         st.session_state.sdh_id = None
+        st.session_state.stranka = "Plán akcí & Docházka"
         if "user_id" in st.query_params:
             del st.query_params["user_id"]
         st.rerun()
@@ -99,6 +120,7 @@ if not st.session_state.logged_in:
                         st.session_state.user_role = user["role"]
                         st.session_state.sdh_id = user["sdh_id"]
                         st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
+                        st.session_state.stranka = "Plán akcí & Docházka"
                         
                         if zustat_prihlasen:
                             st.query_params["user_id"] = str(user["id"])
@@ -136,7 +158,6 @@ if not st.session_state.logged_in:
         reg_email = st.text_input("E-mail")
         reg_heslo = st.text_input("Heslo pro přihlášení", type="password")
         
-        # Každý si vybírá čistou pozici
         pozice_na_utoku = ["strojník", "levý proud", "pravý proud", "béčka", "spoj", "koš", "rozdělovač", "člen"]
         vybrana_role = st.selectbox("Vyberte vaši hlavní pozici ve sboru:", pozice_na_utoku)
         
@@ -233,8 +254,8 @@ elif st.session_state.logged_in:
                 prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else " (přezdívka nenastavena)"
                 st.write(f"• **{c['jmeno']} {c['prijmeni']}**{prez_info} — `{c['role']}` (Kontakt: {c['email']})")
 
-    # --- 3. MOJE NASTAVENÍ (PRO VŠECHNY STEJNÉ) ---
-    elif volba == "⚙️ Moje nastavení":
+    # --- 3. MOJE NASTAVENÍ (ZOBRAZENÍ KLIKNUTÍM NA TLAČÍTKO NAHOŘE) ---
+    elif volba == "Moje nastavení":
         st.header("⚙️ Moje osobní nastavení")
         
         u_aktualni = supabase.table("uzivatele").select("prezdivka, role").eq("id", st.session_state.user_id).execute()
@@ -265,7 +286,7 @@ elif st.session_state.logged_in:
             except Exception as e:
                 st.error("Nepodařilo se uložit. Zkontrolujte, zda zvolenou přezdívku už nepoužívá jiný člen.")
 
-    # --- 4. SPRÁVA SBORU (ZOBRAZÍ SE JEN TOBĚ JAKO SPRÁVCI) ---
+    # --- 4. SPRÁVA SBORU (PRO SPRÁVCE) ---
     elif volba == "🛠️ Správa sboru (Správce)":
         st.header("🛠️ Administrace sboru (Pouze Správce)")
         
