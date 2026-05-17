@@ -69,19 +69,22 @@ if st.session_state.logged_in:
     
     st.sidebar.write("---")
     
-    # 3. ROZBALOVACÍ MENU "KAM CHCETE JÍT?" (AŽ POD VIZITKOU)
+    # 3. ROZBALOVACÍ MENU "KAM CHCETE JÍT?"
     menu_moznosti = ["Plán akcí & Docházka", "Seznam členů sboru"]
     if je_spravce:
         menu_moznosti.append("🛠️ Správa sboru (Správce)")
         
-    index_vypoctu = 0
-    if st.session_state.stranka in menu_moznosti:
-        index_vypoctu = menu_moznosti.index(st.session_state.stranka)
+    # Pokud se nacházíme v "Moje nastavení", přidáme ho dočasně do menu, aby selectbox neselhal
+    vsechny_moznosti_menu = menu_moznosti.copy()
+    if st.session_state.stranka == "Moje nastavení":
+        vsechny_moznosti_menu.append("Moje nastavení")
         
-    volba_menu = st.sidebar.selectbox("Kam chcete jít?", menu_moznosti, index=index_vypoctu)
+    index_vypoctu = vsechny_moznosti_menu.index(st.session_state.stranka)
+        
+    volba_menu = st.sidebar.selectbox("Kam chcete jít?", vsechny_moznosti_menu, index=index_vypoctu)
     
-    # Detekce ruční změny v selectboxu
-    if st.session_state.stranka != volba_menu and volba_menu in menu_moznosti:
+    # Detekce ruční změny v selectboxu (uživatel kliknul jinam než na nastavení)
+    if st.session_state.stranka != volba_menu:
         st.session_state.stranka = volba_menu
         st.rerun()
 
@@ -129,7 +132,7 @@ if not st.session_state.logged_in:
                     else:
                         st.error("Nesprávné heslo.")
                 else:
-                    st.error("Uživatel s tímto údajems neexistuje.")
+                    st.error("Uživatel s tímto údajem neexistuje.")
             else:
                 st.warning("Vyplňte prosím všechna pole.")
 
@@ -253,7 +256,7 @@ elif st.session_state.logged_in:
                 prez_info = f" ({c['prezdivka']})" if c.get('prezdivka') else ""
                 st.write(f"• 🧑‍🚒 **{c['jmeno']} {c['prijmeni']}**{prez_info} — `{c['role']}` (Kontakt: {c['email']})")
 
-    # --- 3. MOJE NASTAVENÍ (S EMAILM A POZICÍ, BEZ AVATARU) ---
+    # --- 3. MOJE NASTAVENÍ (ZDE SE NYNÍ ZOBRAZÍ VŠE POŽADOVANÉ) ---
     elif volba == "Moje nastavení":
         st.header("⚙️ Moje osobní nastavení")
         
@@ -286,6 +289,8 @@ elif st.session_state.logged_in:
                     }
                     
                     supabase.table("uzivatele").update(zmeny).eq("id", st.session_state.user_id).execute()
+                    
+                    # Okamžitá změna v session state, aby se upravil i boční panel
                     st.session_state.user_role = nova_role
                     
                     st.success("Profil byl úspěšně aktualizován!")
