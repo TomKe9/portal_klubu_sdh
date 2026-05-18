@@ -2,9 +2,123 @@ import streamlit as st
 import pandas as pd
 import urllib.parse
 import bcrypt
+import re
 from datetime import date
 from supabase import create_client, Client
 from streamlit_calendar import calendar
+
+# ==========================================
+# SQL SCHÉMA PRO INICIALIZACI SUPABASE
+# ==========================================
+"""
+Zkopírujte tento skript do SQL Editoru v Supabase před spuštěním aplikace:
+
+CREATE TABLE sbory (
+    id SERIAL PRIMARY KEY,
+    nazev_sdh TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE uzivatele (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE SET NULL,
+    jmeno TEXT NOT NULL,
+    prijmeni TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    prezdivka TEXT,
+    heslo_hash TEXT NOT NULL,
+    role TEXT DEFAULT 'člen',
+    avatar TEXT DEFAULT '🧑‍🚒',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE poplachy (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
+    udalost TEXT NOT NULL,
+    misto TEXT NOT NULL,
+    aktivni BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE poplach_reakce (
+    id SERIAL PRIMARY KEY,
+    poplach_id INT REFERENCES poplachy(id) ON DELETE CASCADE,
+    uzivatel_id INT REFERENCES uzivatele(id) ON DELETE CASCADE,
+    stav TEXT NOT NULL,
+    cas_prijezdu TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(poplach_id, uzivatel_id)
+);
+
+CREATE TABLE akce (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
+    nazev_akce TEXT NOT NULL,
+    typ_akce TEXT NOT NULL,
+    datum DATE NOT NULL,
+    cas TEXT,
+    pouzita_technika TEXT,
+    cislo_vyjezdu TEXT,
+    poznamka TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE dochazka (
+    id SERIAL PRIMARY KEY,
+    akce_id INT REFERENCES akce(id) ON DELETE CASCADE,
+    uzivatel_id INT REFERENCES uzivatele(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(akce_id, uzivatel_id)
+);
+
+CREATE TABLE nastenka (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
+    autor_jmeno TEXT NOT NULL,
+    nadpis TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE sklad (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
+    nazev TEXT NOT NULL,
+    velikost TEXT,
+    prideleno_uzivatel_id INT REFERENCES uzivatele(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE kvalifikace (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
+    uzivatel_id INT REFERENCES uzivatele(id) ON DELETE CASCADE,
+    typ TEXT NOT NULL,
+    platnost_do DATE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE technika (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
+    nazev TEXT NOT NULL,
+    spz TEXT,
+    revize_do DATE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE vodni_zdroje (
+    id SERIAL PRIMARY KEY,
+    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
+    nazev TEXT NOT NULL,
+    typ TEXT NOT NULL,
+    latitude NUMERIC NOT NULL,
+    longitude NUMERIC NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+"""
 
 # ==========================================
 # 1. KONFIGURACE & INICIALIZACE SYSTÉMU
@@ -16,7 +130,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Načtení čistého vzhledu a globální stylování fontů
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700&display=swap');
@@ -37,28 +150,33 @@ except Exception as e:
 # ==========================================
 # 2. POMOCNÉ FUNKCE & BEZPEČNÝ STATE
 # ==========================================
+def odstran_diakritiku(text):
+    """Odstraní českou diakritiku z textového řetězce (klíčové pro QR bankovní standardy)."""
+    skore = {
+        'á':'a','č':'c','ď':'d','é':'e','ě':'e','í':'i','ň':'n','ó':'o','ř':'r','š':'s','ť':'t','ú':'u','ů':'u','ý':'y','ž':'z',
+        'Á':'A','Č':'C','Ď':'D','É':'E','Ě':'E','Í':'I','Ň':'N','Ó':'O','Ř':'R','Š':'S','Ť':'T','Ú':'U','Ů':'U','Ý':'Y','Ž':'Z'
+    }
+    return ''.join(skore.get(char, char) for char in text)
+
 def uloz_avatar_do_db(user_id, avatar_emoji):
-    """Bezpečně uloží avatar uživatele do Supabase s fallbackem."""
     try:
         supabase.table("uzivatele").update({"avatar": avatar_emoji}).eq("id", user_id).execute()
     except Exception:
         pass
 
 def ziskej_avatar_bezpecne(user_data):
-    """Vrací nastavený avatar z databáze nebo výchozí hodnotu."""
     if user_data and "avatar" in user_data and user_data["avatar"]:
         return user_data["avatar"]
     return "🧑‍🚒"
 
 def generuj_qr(castka, zprava):
-    """Generuje validní Paylibo QR kód pro české bankovní aplikace ze standardního IBANu."""
     iban = "CZ1234567890123456789012"  # Vzorový národní IBAN sboru
     kod_banky = iban[4:8]
     cislo_uctu = iban[8:]
-    return f"https://api.paylibo.com/paylibo/generator/czech/image?accountNumber={cislo_uctu}&bankCode={kod_banky}&amount={castka}&currency=CZK&message={urllib.parse.quote(zprava[:20])}"
+    cista_zprava = odstran_diakritiku(zprava[:20])
+    return f"https://api.paylibo.com/paylibo/generator/czech/image?accountNumber={cislo_uctu}&bankCode={kod_banky}&amount={castka}&currency=CZK&message={urllib.parse.quote(cista_zprava)}"
 
 def zpracej_relaci_uzivatele(r_data):
-    """Defenzivní parsování Supabase JSON relací cizích klíčů."""
     u_info = r_data.get("uzivatele", {})
     if isinstance(u_info, list) and len(u_info) > 0:
         return u_info[0]
@@ -66,7 +184,6 @@ def zpracej_relaci_uzivatele(r_data):
         return u_info
     return {}
 
-# Inicializace session_state prvků
 session_defaults = {
     "logged_in": False, "user_id": None, "user_jmeno": "", "user_role": "člen",
     "sdh_id": None, "sdh_nazev": "", "user_avatar": "🧑‍🚒", "stranka": "🚨 POPLACH & Výjezd"
@@ -94,7 +211,6 @@ def prihlas_uzivatele(user, zustat_prihlasen=False):
         st.query_params["user_id"] = str(user["id"])
     st.rerun()
 
-# Automatické bezpečné přihlášení z URL parametrů
 if st.query_params.get("user_id") and not st.session_state.logged_in:
     try:
         res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").eq("id", st.query_params["user_id"]).execute()
@@ -103,7 +219,6 @@ if st.query_params.get("user_id") and not st.session_state.logged_in:
     except Exception:
         st.query_params.clear()
 
-# Hlavní záhlaví portálu
 st.title("🚒 Hasičský Portál JSDH")
 st.caption("Jednotný vnitřní systém pro správu výjezdové jednotky a sboru")
 st.write("")
@@ -175,14 +290,12 @@ if not st.session_state.logged_in:
 # 4. VNITŘNÍ PROSTŘEDÍ (PŘIHLÁŠENÝ UŽIVATEL)
 # ==========================================
 else:
-    # Ověření správcovského oprávnění (Velitel nebo první registrovaný)
     try:
         vlastnik = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at").limit(1).execute()
         je_spravce = bool(vlastnik.data and vlastnik.data[0]["id"] == st.session_state.user_id or st.session_state.user_role == "velitel")
     except Exception:
         je_spravce = False
 
-    # Boční navigační panel
     with st.sidebar.container(border=True):
         st.markdown(f"### {st.session_state.user_avatar} {st.session_state.user_jmeno}")
         st.markdown(f"Funkce: `{st.session_state.user_role.upper()}`")
@@ -190,17 +303,14 @@ else:
     
     st.sidebar.write("")
     
-    # Definice struktury hierarchického menu
     sekce_menu = {
         "🚨 OPERATIVNÍ MODULY": ["🚨 POPLACH & Výjezd", "📅 Plán akcí & Docházka", "📑 Kniha výjezdů & Export", "🗺️ Mapa vodních zdrojů"],
-        "📦 INTERNÍ ADM": ["📢 Nástěnka sboru", "📦 Sklad & Výstroj OOP", "🎖️ Kvalifikace & Odbornost", "📊 Statistiky docházky", "🛠️ Technika & Revize", "🪙 Pokladna & Příspěvky", "🧑‍🚒 Seznam členů sboru", "⚙️ Moje nastavení"]
+        "📦 INTERNÍ ADM": ["📢 Nást健全ka sboru", "📦 Sklad & Výstroj OOP", "🎖️ Kvalifikace & Odbornost", "📊 Statistiky docházky", "🛠️ Technika & Revize", "🪙 Pokladna & Příspěvky", "🧑‍🚒 Seznam členů sboru", "⚙️ Moje nastavení"]
     }
     if je_spravce: 
         sekce_menu["🛠️ ADMINISTRACE SBORU"] = ["⚙️ Správa sboru (Správce)"]
 
     vsechny_stranky = [stranka for podseznam in sekce_menu.values() for stranka in podseznam]
-    
-    # Nativní reaktivní přepínání stránek přes session_state bez blikání
     volba = st.sidebar.radio("Menu aplikace", vsechny_stranky, key="stranka")
 
     st.sidebar.divider()
@@ -317,7 +427,7 @@ else:
         st.subheader("Plán sborových akcí, hlášení a cvičení")
         
         if je_spravce:
-            with st.expander("➕ ZAPÍSAT NOVOU AKCI / CVIČENÍ / ZÁSAH"):
+            with st.expander("➕ ZAPISOVAT NOVOU AKCI / CVIČENÍ / ZÁSAH"):
                 with st.form("form_nova_akce"):
                     f_nazev = st.text_input("Název události")
                     f_typ = st.selectbox("Typ akce", ["Zásah", "Cvičení", "Školení", "Schůze", "Brigáda", "Kulturní akce"])
@@ -395,7 +505,7 @@ else:
             st.dataframe(df, use_container_width=True)
             
             st.download_button(
-                label="📥 Exportovat knihu zásahů do CSV (Excel kompatibilní)", 
+                label="📥 Exportovat knihu zásahů do CSV", 
                 data=df.to_csv(index=False, encoding="utf-8-sig"), 
                 file_name=f"kniha_zasahu_{st.session_state.sdh_id}.csv", 
                 mime="text/csv"
@@ -433,7 +543,7 @@ else:
             
         if zdroje:
             df_mapa = pd.DataFrame(zdroje)
-            # Ochrana před chybou datových typů pro mapovou komponentu
+            df_mapa = df_mapa.dropna(subset=["latitude", "longitude"])
             df_mapa["latitude"] = pd.to_numeric(df_mapa["latitude"])
             df_mapa["longitude"] = pd.to_numeric(df_mapa["longitude"])
             
@@ -650,7 +760,7 @@ else:
         with col_plat:
             st.markdown("### 💳 Generátor členských příspěvků")
             castka = st.number_input("Částka k úhradě (Kč):", min_value=1, value=500, step=50)
-            zprava = st.text_input("Zpráva pro příjemce:", value=f"Prispevek {st.session_state.user_jmeno}")
+            zprava = st.text_input("Zpráva pro příjemce (bez diakritiky):", value=f"Prispevek {st.session_state.user_jmeno}")
             
         with col_qr:
             st.markdown("### 📲 Bankovní QR kód")
