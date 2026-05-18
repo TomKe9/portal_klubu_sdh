@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
-import os
-import json
-import bcrypt
 import urllib.parse
+import bcrypt
 from datetime import date
 from supabase import create_client, Client
 from streamlit_calendar import calendar
@@ -30,17 +28,20 @@ st.markdown("""
 def init_connection() -> Client:
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-supabase = init_connection()
+try:
+    supabase = init_connection()
+except Exception as e:
+    st.error(f"Nelze inicializovat připojení k Supabase. Ověřte soubor `.streamlit/secrets.toml`. Chyba: {e}")
+    st.stop()
 
 # ==========================================
 # 2. POMOCNÉ FUNKCE & BEZPEČNÝ STATE
 # ==========================================
 def uloz_avatar_do_db(user_id, avatar_emoji):
-    """Bezpečně uloží avatar uživatele do Supabase s fallbackem do stavu aplikace."""
+    """Bezpečně uloží avatar uživatele do Supabase s fallbackem."""
     try:
         supabase.table("uzivatele").update({"avatar": avatar_emoji}).eq("id", user_id).execute()
     except Exception:
-        # Fallback pokud v DB tabulce ještě neexistuje sloupec 'avatar'
         pass
 
 def ziskej_avatar_bezpecne(user_data):
@@ -50,11 +51,14 @@ def ziskej_avatar_bezpecne(user_data):
     return "🧑‍🚒"
 
 def generuj_qr(castka, zprava):
-    iban = "CZ1234567890123456789012" # Zde doplňte reálný IBAN sboru
-    return f"https://api.paylibo.com/paylibo/generator/czech/image?accountNumber={iban[2:]}&bankCode={iban[2:6]}&amount={castka}&currency=CZK&message={urllib.parse.quote(zprava[:20])}"
+    """Generuje validní Paylibo QR kód pro české bankovní aplikace ze standardního IBANu."""
+    iban = "CZ1234567890123456789012"  # Vzorový národní IBAN sboru
+    kod_banky = iban[4:8]
+    cislo_uctu = iban[8:]
+    return f"https://api.paylibo.com/paylibo/generator/czech/image?accountNumber={cislo_uctu}&bankCode={kod_banky}&amount={castka}&currency=CZK&message={urllib.parse.quote(zprava[:20])}"
 
 def zpracej_relaci_uzivatele(r_data):
-    """Defenzivní parsování Supabase JSON relací (předchází pádům při změně struktury API)."""
+    """Defenzivní parsování Supabase JSON relací cizích klíčů."""
     u_info = r_data.get("uzivatele", {})
     if isinstance(u_info, list) and len(u_info) > 0:
         return u_info[0]
@@ -90,7 +94,7 @@ def prihlas_uzivatele(user, zustat_prihlasen=False):
         st.query_params["user_id"] = str(user["id"])
     st.rerun()
 
-# Automatické bezpečné přihlášení z URL cookies/parametrů
+# Automatické bezpečné přihlášení z URL parametrů
 if st.query_params.get("user_id") and not st.session_state.logged_in:
     try:
         res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").eq("id", st.query_params["user_id"]).execute()
@@ -99,7 +103,7 @@ if st.query_params.get("user_id") and not st.session_state.logged_in:
     except Exception:
         st.query_params.clear()
 
-# Hlavní záhlaví
+# Hlavní záhlaví portálu
 st.title("🚒 Hasičský Portál JSDH")
 st.caption("Jednotný vnitřní systém pro správu výjezdové jednotky a sboru")
 st.write("")
@@ -171,14 +175,14 @@ if not st.session_state.logged_in:
 # 4. VNITŘNÍ PROSTŘEDÍ (PŘIHLÁŠENÝ UŽIVATEL)
 # ==========================================
 else:
-    # Ověření, zda je aktuální uživatel správcem/zakladatelem sboru
+    # Ověření správcovského oprávnění (Velitel nebo první registrovaný)
     try:
         vlastnik = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at").limit(1).execute()
         je_spravce = bool(vlastnik.data and vlastnik.data[0]["id"] == st.session_state.user_id or st.session_state.user_role == "velitel")
     except Exception:
         je_spravce = False
 
-    # Boční navigační lišta
+    # Boční navigační panel
     with st.sidebar.container(border=True):
         st.markdown(f"### {st.session_state.user_avatar} {st.session_state.user_jmeno}")
         st.markdown(f"Funkce: `{st.session_state.user_role.upper()}`")
@@ -186,22 +190,18 @@ else:
     
     st.sidebar.write("")
     
-    # Hierarchická navigace
+    # Definice struktury hierarchického menu
     sekce_menu = {
         "🚨 OPERATIVNÍ MODULY": ["🚨 POPLACH & Výjezd", "📅 Plán akcí & Docházka", "📑 Kniha výjezdů & Export", "🗺️ Mapa vodních zdrojů"],
-        "📦 INTERNÍ ADM": ["📢 Nástěnka sboru", "📦 Sklad & Výstroj OOP", "🎖️ Kvalifikace & Odbornost", "📊 Statistiky docházky", "🛠️ Technika & Revize", "🪙 Pokladna & Příspěvky", "🧑‍🚒 Seznam členů sboru"]
+        "📦 INTERNÍ ADM": ["📢 Nástěnka sboru", "📦 Sklad & Výstroj OOP", "🎖️ Kvalifikace & Odbornost", "📊 Statistiky docházky", "🛠️ Technika & Revize", "🪙 Pokladna & Příspěvky", "🧑‍🚒 Seznam členů sboru", "⚙️ Moje nastavení"]
     }
     if je_spravce: 
         sekce_menu["🛠️ ADMINISTRACE SBORU"] = ["⚙️ Správa sboru (Správce)"]
 
     vsechny_stranky = [stranka for podseznam in sekce_menu.values() for stranka in podseznam]
-    if st.session_state.stranka not in vsechny_stranky:
-        vsechny_stranky.append(st.session_state.stranka)
-        
-    volba = st.sidebar.radio("Menu aplikace", vsechny_stranky, index=vsechny_stranky.index(st.session_state.stranka))
-    if st.session_state.stranka != volba:
-        st.session_state.stranka = volba
-        st.rerun()
+    
+    # Nativní reaktivní přepínání stránek přes session_state bez blikání
+    volba = st.sidebar.radio("Menu aplikace", vsechny_stranky, key="stranka")
 
     st.sidebar.divider()
     if st.sidebar.button("Odhlásit se z portálu", use_container_width=True, type="primary"):
@@ -211,7 +211,7 @@ else:
         st.rerun()
 
     # ==========================================
-    # MODUL: POPLACH & VÝJEZD (OPRAVENO)
+    # MODUL: POPLACH & VÝJEZD
     # ==========================================
     if volba == "🚨 POPLACH & Výjezd":
         st.subheader("Výjezdový operační monitor")
@@ -222,14 +222,16 @@ else:
                 p_misto = st.text_input("Místo události (Obec, ulice, GPS)")
                 if st.button("SPUSTIT POPLACH A INFORMOVAT JEDNOTKU", type="primary", use_container_width=True):
                     if p_udalost and p_misto:
-                        supabase.table("poplachy").update({"aktivni": False}).eq("sdh_id", st.session_state.sdh_id).execute()
-                        supabase.table("poplachy").insert({"sdh_id": st.session_state.sdh_id, "udalost": p_udalost, "misto": p_misto, "aktivni": True}).execute()
-                        st.success("Poplach byl úspěšně vyhlášen.")
-                        st.rerun()
+                        try:
+                            supabase.table("poplachy").update({"aktivni": False}).eq("sdh_id", st.session_state.sdh_id).execute()
+                            supabase.table("poplachy").insert({"sdh_id": st.session_state.sdh_id, "udalost": p_udalost, "misto": p_misto, "aktivni": True}).execute()
+                            st.success("Poplach byl úspěšně vyhlášen.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Chyba při zápisu poplachu: {e}")
                     else:
                         st.warning("Musíte vyplnit typ i místo události.")
 
-        # Načtení aktivního poplachu
         try:
             poplach = supabase.table("poplachy").select("*").eq("sdh_id", st.session_state.sdh_id).eq("aktivni", True).order("created_at", desc=True).limit(1).execute()
         except Exception:
@@ -246,19 +248,20 @@ else:
             </div>
             """, unsafe_allow_html=True)
             
-            # OPRAVA: Selectbox přesunut ven z podmínky st.buttonu, aby správně držel stav
             c1, c2, c3 = st.columns(3)
             def zaznamenaj_reakci(stav, cas=None):
-                supabase.table("poplach_reakce").upsert({
-                    "poplach_id": p["id"], "uzivatel_id": st.session_state.user_id, "stav": stav, "cas_prijezdu": cas
-                }, on_conflict="poplach_id,uzivatel_id").execute()
-                st.rerun()
+                try:
+                    supabase.table("poplach_reakce").upsert({
+                        "poplach_id": p["id"], "uzivatel_id": st.session_state.user_id, "stav": stav, "cas_prijezdu": cas
+                    }, on_conflict="poplach_id,uzivatel_id").execute()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Chyba při ukládání reakce: {e}")
 
             with c1:
-                if st.button("🟢 JEDO IHNED (Na základnu)", use_container_width=True): 
+                if st.button("🟢 JEDU IHNED (Na základnu)", use_container_width=True): 
                     zaznamenaj_reakci("Jedu", "ihned")
             with c2:
-                # Výběr času je zde dostupný nezávisle na kliknutí
                 zvoleny_cas = st.selectbox("Doba příjezdu na zbrojnici:", ["Do 5 min", "Do 10 min", "Do 15 min", "Nad 15 min"], key="time_select")
                 if st.button("🟡 JEDU SE ZPOŽDĚNÍM", use_container_width=True): 
                     zaznamenaj_reakci("Jedu", zvoleny_cas)
@@ -299,18 +302,20 @@ else:
             if je_spravce:
                 st.write("")
                 if st.button("❌ Odvolat poplach / Ukončit výjezdový režim", use_container_width=True):
-                    supabase.table("poplachy").update({"aktivni": False}).eq("id", p["id"]).execute()
-                    st.rerun()
+                    try:
+                        supabase.table("poplachy").update({"aktivni": False}).eq("id", p["id"]).execute()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Chyba při ukončování poplachu: {e}")
         else:
             st.success("🎉 Jednotka je v klidovém stavu. Není aktivní žádný výjezd.")
 
     # ==========================================
-    # MODUL: PLÁN AKCÍ & DOCHÁZKA (PŘIDÁNA SPRÁVA)
+    # MODUL: PLÁN AKCÍ & DOCHÁZKA
     # ==========================================
     elif volba == "📅 Plán akcí & Docházka":
-        st.subheader("Plán sborových akcí, školení a cvičení")
+        st.subheader("Plán sborových akcí, hlášení a cvičení")
         
-        # PŘIDÁNO: Formulář pro vytváření akcí správcem
         if je_spravce:
             with st.expander("➕ ZAPÍSAT NOVOU AKCI / CVIČENÍ / ZÁSAH"):
                 with st.form("form_nova_akce"):
@@ -319,18 +324,21 @@ else:
                     f_datum = st.date_input("Datum konání", value=date.today())
                     f_cas = st.text_input("Čas (např. 18:00)", value="18:00")
                     f_tech = st.text_input("Předpokládaná technika / Výstroj", value="")
-                    f_c_vyj = st.text_input("Číslo výjezdu (pouze pokud jde o Zásah)", value="")
+                    f_c_vyj = st.text_input("Číslo výjezdu (pouze pro typ Zásah)", value="")
                     f_not = st.text_area("Podrobný popis / Poznámka")
                     
                     if st.form_submit_button("Uložit a publikovat do kalendáře"):
                         if f_nazev:
-                            supabase.table("akce").insert({
-                                "sdh_id": st.session_state.sdh_id, "nazev_akce": f_nazev, "typ_akce": f_typ,
-                                "datum": f_datum.isoformat(), "cas": f_cas, "pouzita_technika": f_tech,
-                                "cislo_vyjezdu": f_c_vyj if f_typ == "Zásah" else None, "poznamka": f_not
-                            }).execute()
-                            st.success("Akce byla úspěšně vytvořena.")
-                            st.rerun()
+                            try:
+                                supabase.table("akce").insert({
+                                    "sdh_id": st.session_state.sdh_id, "nazev_akce": f_nazev, "typ_akce": f_typ,
+                                    "datum": f_datum.isoformat(), "cas": f_cas, "pouzita_technika": f_tech,
+                                    "cislo_vyjezdu": f_c_vyj if f_typ == "Zásah" else None, "poznamka": f_not
+                                }).execute()
+                                st.success("Akce byla úspěšně vytvořena.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Chyba při ukládání akce: {e}")
                         else:
                             st.error("Název akce nesmí zůstat prázdný.")
 
@@ -340,7 +348,7 @@ else:
             akce = []
 
         events = [{"title": f"[{a['typ_akce']}] {a['nazev_akce']}", "start": a["datum"], "end": a["datum"]} for a in akce]
-        calendar(events=events, options={"locale": "cs"}, key="hasiči_calendar")
+        calendar(events=events, options={"locale": "cs"}, key="hasici_calendar_widget")
         
         st.divider()
         dnesni_den = date.today().isoformat()
@@ -356,9 +364,14 @@ else:
                     if a.get("pouzita_technika"): st.markdown(f"🛠️ **Technika:** {a['pouzita_technika']}")
                     st.write(a.get("poznamka", "Bez bližší specifikace."))
                     
-                    # Nativní potvrzení docházky bez uvíznutí ve smyčce
-                    if st.button("Závazně potvrdit účast / Budu přítomen", key=f"att_{a['id']}"):
-                        st.toast("Vaše účast byla zaznamenána do systému docházky!")
+                    if st.button("Závazně potvrdit účast / Budu přítomen", key=f"att_btn_{a['id']}"):
+                        try:
+                            supabase.table("dochazka").upsert({
+                                "akce_id": a["id"], "uzivatel_id": st.session_state.user_id, "status": "Přítomen"
+                            }, on_conflict="akce_id,uzivatel_id").execute()
+                            st.toast("Vaše účast byla uložena do systému docházky!", icon="✅")
+                        except Exception as e:
+                            st.error(f"Zápis docházky selhal: {e}")
 
         with t_nadchazejici:
             vykresli_karty_akci([a for a in akce if a["datum"] >= dnesni_den])
@@ -382,7 +395,7 @@ else:
             st.dataframe(df, use_container_width=True)
             
             st.download_button(
-                label="📥 Exportovat knihu zásahů do XLS/CSV", 
+                label="📥 Exportovat knihu zásahů do CSV (Excel kompatibilní)", 
                 data=df.to_csv(index=False, encoding="utf-8-sig"), 
                 file_name=f"kniha_zasahu_{st.session_state.sdh_id}.csv", 
                 mime="text/csv"
@@ -404,10 +417,14 @@ else:
                 v_lon = st.number_input("Zeměpisná délka (Longitude)", format="%.6f", value=16.5)
                 
                 if st.button("Uložit bod do taktické mapy"):
-                    supabase.table("vodni_zdroje").insert({
-                        "sdh_id": st.session_state.sdh_id, "nazev": v_nazev, "typ": v_typ, "latitude": v_lat, "longitude": v_lon
-                    }).execute()
-                    st.success("Bod úspěšně uložen."); st.rerun()
+                    try:
+                        supabase.table("vodni_zdroje").insert({
+                            "sdh_id": st.session_state.sdh_id, "nazev": v_nazev, "typ": v_typ, "latitude": v_lat, "longitude": v_lon
+                        }).execute()
+                        st.success("Bod úspěšně uložen.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Chyba při zápisu GPS bodu: {e}")
 
         try:
             zdroje = supabase.table("vodni_zdroje").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data or []
@@ -416,6 +433,10 @@ else:
             
         if zdroje:
             df_mapa = pd.DataFrame(zdroje)
+            # Ochrana před chybou datových typů pro mapovou komponentu
+            df_mapa["latitude"] = pd.to_numeric(df_mapa["latitude"])
+            df_mapa["longitude"] = pd.to_numeric(df_mapa["longitude"])
+            
             st.map(df_mapa, latitude="latitude", longitude="longitude", size=20)
             st.write("#### 📋 Seznam lokalizovaných bodů")
             for z in zdroje:
@@ -435,10 +456,13 @@ else:
                 n_text = st.text_area("Text sdělení")
                 if st.button("Publikovat na nástěnku", type="primary"):
                     if n_nadpis and n_text:
-                        supabase.table("nastenka").insert({
-                            "sdh_id": st.session_state.sdh_id, "autor_jmeno": st.session_state.user_jmeno, "nadpis": n_nadpis, "text": n_text
-                        }).execute()
-                        st.rerun()
+                        try:
+                            supabase.table("nastenka").insert({
+                                "sdh_id": st.session_state.sdh_id, "autor_jmeno": st.session_state.user_jmeno, "nadpis": n_nadpis, "text": n_text
+                            }).execute()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Zápis na nástěnku selhal: {e}")
 
         try:
             zpravy = supabase.table("nastenka").select("*").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=True).execute().data or []
@@ -452,8 +476,11 @@ else:
                 st.caption(f"Vložil/a: **{z['autor_jmeno']}** dne {z['created_at'][:10]}")
                 if je_spravce:
                     if st.button("🗑️ Smazat příspěvek", key=f"del_n_{z['id']}"):
-                        supabase.table("nastenka").delete().eq("id", z["id"]).execute()
-                        st.rerun()
+                        try:
+                            supabase.table("nastenka").delete().eq("id", z["id"]).execute()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Chyba při odstraňování: {e}")
 
     # ==========================================
     # MODUL: SKLAD & VÝSTROJ OOP
@@ -478,7 +505,7 @@ else:
                 for item in moje: 
                     st.info(f"🥾 **{item['nazev']}** (Evidenční číslo/Velikost: `{item['velikost']}`)")
             else:
-                st.caption("Nemáte v evidenci přiřazenou žádnou konkrétní výstroj.")
+                st.caption("Nemáte v osobní evidenci přiřazenou žádnou výstroj.")
         
         with ts:
             if je_spravce:
@@ -489,11 +516,15 @@ else:
                     
                     if st.button("Uložit položku do skladu"):
                         if mat:
-                            uz_id = slovnik_clenu.get(kdo) if kdo != "Ponechat volně na skladě" else None
-                            supabase.table("sklad").insert({
-                                "sdh_id": st.session_state.sdh_id, "nazev": mat, "velikost": vel, "prideleno_uzivatel_id": uz_id
-                            }).execute()
-                            st.success("Materiál byl naskladněn."); st.rerun()
+                            try:
+                                uz_id = slovnik_clenu.get(kdo) if kdo != "Ponechat volně na skladě" else None
+                                supabase.table("sklad").insert({
+                                    "sdh_id": st.session_state.sdh_id, "nazev": mat, "velikost": vel, "prideleno_uzivatel_id": uz_id
+                                }).execute()
+                                st.success("Materiál byl naskladněn.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Chyba naskladnění: {e}")
 
             try:
                 sklad_vse = supabase.table("sklad").select("*, uzivatele(jmeno, prijmeni)").eq("sdh_id", st.session_state.sdh_id).execute().data or []
@@ -518,10 +549,14 @@ else:
                 k_platnost = st.date_input("Konec platnosti osvědčení:")
                 
                 if st.button("Zapsat certifikát"):
-                    supabase.table("kvalifikace").insert({
-                        "sdh_id": st.session_state.sdh_id, "uzivatel_id": slovnik_clenu[k_hasic], "typ": k_typ, "platnost_do": k_platnost.isoformat()
-                    }).execute()
-                    st.success("Kvalifikace byla zanesena."); st.rerun()
+                    try:
+                        supabase.table("kvalifikace").insert({
+                            "sdh_id": st.session_state.sdh_id, "uzivatel_id": slovnik_clenu[k_hasic], "typ": k_typ, "platnost_do": k_platnost.isoformat()
+                        }).execute()
+                        st.success("Kvalifikace byla zanesena.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Chyba při zápisu kvalifikace: {e}")
 
         try:
             kvalifikace = supabase.table("kvalifikace").select("*, uzivatele(jmeno, prijmeni)").eq("sdh_id", st.session_state.sdh_id).order("platnost_do").execute().data or []
@@ -585,10 +620,14 @@ else:
                 
                 if st.button("Uložit techniku do evidence"):
                     if t_nazev:
-                        supabase.table("technika").insert({
-                            "sdh_id": st.session_state.sdh_id, "nazev": t_nazev, "spz": t_spz, "revize_do": t_stk.isoformat()
-                        }).execute()
-                        st.success("Technika zanesena."); st.rerun()
+                        try:
+                            supabase.table("technika").insert({
+                                "sdh_id": st.session_state.sdh_id, "nazev": t_nazev, "spz": t_spz, "revize_do": t_stk.isoformat()
+                            }).execute()
+                            st.success("Technika zanesena.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Chyba ukládání techniky: {e}")
 
         try:
             tech_data = supabase.table("technika").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data or []
@@ -599,7 +638,7 @@ else:
             else:
                 st.info("Sbor nemá registrovanou žádnou techniku.")
         except Exception:
-            st.warning("Upozornění: Pro aktivaci tohoto modulu ověřte existenci tabulky 'technika' v databázi.")
+            st.warning("Upozornění: Aktivujte tabulku 'technika' v databázi.")
 
     # ==========================================
     # MODUL: POKLADNA & PŘÍSPĚVKY
@@ -611,12 +650,12 @@ else:
         with col_plat:
             st.markdown("### 💳 Generátor členských příspěvků")
             castka = st.number_input("Částka k úhradě (Kč):", min_value=1, value=500, step=50)
-            zprava = st.text_input("Zpráva pro příjemce:", value=f"Příspěvek {st.session_state.user_jmeno}")
+            zprava = st.text_input("Zpráva pro příjemce:", value=f"Prispevek {st.session_state.user_jmeno}")
             
         with col_qr:
             st.markdown("### 📲 Bankovní QR kód")
-            if st.button("Vygenerovat QR kód pro mobilní bankovnictví", use_container_width=True):
-                st.image(generuj_qr(castka, zprava), caption="Naskenujte kód ve svém bankovnictví pro okamžitou platbu.")
+            if st.button("Vygenerovat QR kód pro platbu", use_container_width=True):
+                st.image(generuj_qr(castka, zprava), caption="Naskenujte QR kód v mobilním bankovnictví.")
 
     # ==========================================
     # MODUL: SEZNAM ČLENŮ SBORU
@@ -634,6 +673,22 @@ else:
             st.dataframe(pd.DataFrame(upraveny_seznam), use_container_width=True)
         else:
             st.error("Nepodařilo se načíst seznam členů.")
+
+    # ==========================================
+    # MODUL: MOJE NASTAVENÍ (PROFIL)
+    # ==========================================
+    elif volba == "⚙️ Moje nastavení":
+        st.subheader("Osobní nastavení profilu hasiče")
+        
+        seznam_emojii = ["🧑‍🚒", "👨‍🚒", "👩‍🚒", "🚒", "🚨", "🛡️", "⚡", "🌲"]
+        def_idx = seznam_emojii.index(st.session_state.user_avatar) if st.session_state.user_avatar in seznam_emojii else 0
+        
+        novy_avatar = st.selectbox("Vyberte svoji ikonu do seznamů a postranního panelu:", seznam_emojii, index=def_idx)
+        if st.button("Uložit změny profilu", type="primary"):
+            uloz_avatar_do_db(st.session_state.user_id, novy_avatar)
+            st.session_state.user_avatar = novy_avatar
+            st.success("Vaše nastavení bylo uloženo.")
+            st.rerun()
 
     # ==========================================
     # MODUL: SPRÁVA SBORU (ADMINISTRÁTOR)
@@ -659,22 +714,8 @@ else:
                 nova_r = cx2.selectbox("Pozice:", dostupne_role, index=idx, key=f"adm_r_{u['id']}")
                 
                 if cx3.button("Uložit změny", key=f"adm_s_{u['id']}"):
-                    supabase.table("uzivatele").update({"role": nova_r}).eq("id", u["id"]).execute()
-                    st.toast("Změna role byla úspěšně uložena!")
-                    st.rerun()
-
-    # ==========================================
-    # MODUL: MOJE NASTAVENÍ (PROFIL)
-    # ==========================================
-    elif volba == "Moje nastavení":
-        st.subheader("Osobní nastavení profilu hasiče")
-        
-        seznam_emojii = ["🧑‍🚒", "👨‍🚒", "👩‍🚒", "🚒", "🚨", "🛡️", "⚡", "🌲"]
-        def_idx = seznam_emojii.index(st.session_state.user_avatar) if st.session_state.user_avatar in seznam_emojii else 0
-        
-        novy_avatar = st.selectbox("Vyberte svoji ikonu do seznamů a sidebarů:", seznam_emojii, index=def_idx)
-        if st.button("Uložit změny profilu", type="primary"):
-            uloz_avatar_do_db(st.session_state.user_id, novy_avatar)
-            st.session_state.user_avatar = novy_avatar
-            st.success("Vaše nastavení bylo uloženo.")
-            st.rerun()
+                    try:
+                        supabase.table("uzivatele").update({"role": nova_r}).eq("id", u["id"]).execute()
+                        st.toast("Změna role byla úspěšně uložena!", icon="💾")
+                    except Exception as e:
+                        st.error(f"Chyba při ukládání role: {e}")
