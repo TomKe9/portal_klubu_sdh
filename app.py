@@ -125,8 +125,8 @@ if not st.session_state.logged_in:
     
     with tab1:
         st.markdown("<div class='dashboard-card'>", unsafe_allow_html=True)
-        login_input = st.text_input("E-mail nebo uživatelská přezdívka").strip()
-        login_heslo = st.text_input("Heslo", type="password")
+        login_input = st.text_input("E-mail nebo uživatelská přezdívka", key="login_username_input").strip()
+        login_heslo = st.text_input("Heslo", type="password", key="login_heslo_input")
         
         if st.button("Autorizovat vstup", type="primary", use_container_width=True):
             if login_input and login_heslo:
@@ -138,7 +138,7 @@ if not st.session_state.logged_in:
                         st.session_state.user_id = user["id"]
                         st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
                         st.session_state.user_role = user["role"]
-                        st.session_state.user_schvalen = user.get("schvalen", True) # Pokud chybí sloupec, default True
+                        st.session_state.user_schvalen = user.get("schvalen", True)
                         st.session_state.sdh_id = user["sdh_id"]
                         st.session_state.sdh_nazev = user["sbory"]["nazev_sdh"]
                         st.session_state.sdh_iban = user["sbory"].get("iban", "CZ1234567890123456789012")
@@ -165,8 +165,8 @@ if not st.session_state.logged_in:
             
         reg_jmeno = st.text_input("Jméno")
         reg_prijmeni = st.text_input("Příjmení")
-        reg_email = st.text_input("E-mail")
-        reg_heslo = st.text_input("Heslo", type="password")
+        reg_email = st.text_input("E-mail", key="reg_email_input")
+        reg_heslo = st.text_input("Heslo", type="password", key="reg_heslo_input")
         vybrana_role = st.selectbox("Zařazení v jednotce/sboru:", ["velitel", "strojník", "hasič", "člen"])
         
         if st.button("Odeslat registraci", type="secondary"):
@@ -177,7 +177,6 @@ if not st.session_state.logged_in:
                         vybrany_sdh_id = sbor_ins.data[0]["id"]
                     
                     hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                    # První člen nového sboru je rovnou schválen jako správce, ostatní čekají na schválení
                     je_prvni = len(supabase.table("uzivatele").select("id").eq("sdh_id", vybrany_sdh_id).execute().data) == 0
                     
                     supabase.table("uzivatele").insert({
@@ -201,13 +200,11 @@ elif st.session_state.logged_in and not st.session_state.user_schvalen:
 # 4. HLAVNÍ ROZHRANÍ PRO SCHVÁLENÉ ČLENY
 # ==========================================
 else:
-    # Určení, zda je přihlášený uživatel správce/velitel sboru
     je_spravce = False
     vlastnik_res = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=False).limit(1).execute()
     if (vlastnik_res.data and vlastnik_res.data[0]["id"] == st.session_state.user_id) or st.session_state.user_role == "velitel":
         je_spravce = True
 
-    # Boční menu
     st.sidebar.markdown("<br>", unsafe_allow_html=True)
     st.sidebar.markdown(f"""
     <div style="display: flex; align-items: center; background-color: #f8f9fa; padding: 12px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee;">
@@ -278,7 +275,6 @@ else:
                     supabase.table("poplach_reakce").upsert({"poplach_id": aktivni_poplach["id"], "uzivatel_id": st.session_state.user_id, "stav": "Nedorazím", "cas_prijezdu": None}, on_conflict="poplach_id,uzivatel_id").execute()
                     st.rerun()
 
-            # Přehled posádky
             reakce_res = supabase.table("poplach_reakce").select("stav, cas_prijezdu, uzivatele(jmeno, prijmeni, role)").eq("poplach_id", aktivni_poplach["id"]).execute()
             if reakce_res.data:
                 cg1, cg2 = st.columns(2)
@@ -305,7 +301,6 @@ else:
         akce_res = supabase.table("akce").select("*").eq("sdh_id", st.session_state.sdh_id).order("datum").execute()
         vsechny_akce = akce_res.data if akce_res.data else []
         
-        # Interaktivní full-calendar
         kalendar_udalosti = []
         for akce in vsechny_akce:
             kalendar_udalosti.append({
@@ -332,7 +327,7 @@ else:
                         supabase.table("dochazka").upsert({"akce_id": akce["id"], "uzivatel_id": st.session_state.user_id, "status": "Nejdu"}, on_conflict="akce_id,uzivatel_id").execute()
                         st.rerun()
 
-    # --- MODUL: POKLADNA & PŘÍSPĚVKY ---
+    # --- MODUL: POKLADNA ---
     elif volba == "🪙 Pokladna & Příspěvky":
         st.subheader("Sborová pokladna a platba příspěvků")
         
@@ -351,7 +346,6 @@ else:
         castka_p = st.number_input("Částka příspěvku (Kč):", value=500, step=100)
         msg = f"Prispevek {st.session_state.user_jmeno}"
         
-        # Generování QR kódu na základě reálného IBANu sboru z DB
         qr_url = generuj_qr_kod_url(st.session_state.sdh_iban, castka_p, msg)
         cq1, cq2 = st.columns([1, 2])
         with cq1: st.image(qr_url, width=220)
@@ -419,7 +413,7 @@ else:
             if c["schvalen"]:
                 st.markdown(f"<div class='dashboard-card'>🧑‍🚒 <b>{c['jmeno']} {c['prijmeni']}</b> — Role: {c['role']}</div>", unsafe_allow_html=True)
 
-    # --- MODUL: NASTAVENÍ PROFILU ---
+    # --- MODUL: MOJE NASTAVENÍ ---
     elif volba == "⚙️ Moje nastavení":
         st.subheader("Osobní nastavení profilu")
         strav_avatar = ziskej_avatar_uzivatele(st.session_state.user_id)
@@ -436,11 +430,10 @@ else:
             st.session_state.logged_in = False
             st.rerun()
 
-    # --- MODUL: ADMINISTRACE VELITELE (SCHVALOVÁNÍ) ---
+    # --- MODUL: ADMIN VELITELE ---
     elif volba == "⚙️ Správa sboru (Velitel)" and je_spravce:
         st.subheader("Administrace sboru a schvalování členů")
         
-        # Sekce 1: Schvalování nových registrací
         st.markdown("### 🔒 Členové čekající na schválení přístupu")
         neschvaleni = supabase.table("uzivatele").select("id, jmeno, prijmeni, email, role").eq("sdh_id", st.session_state.sdh_id).eq("schvalen", False).execute().data
         
@@ -457,7 +450,6 @@ else:
         else:
             st.info("Žádost o přístup nepodal žádný nový člen.")
             
-        # Sekce 2: Plánování akcí do kalendáře
         st.markdown("<br><hr>### 📅 Naplánovat novou akci do kalendáře sboru", unsafe_allow_html=True)
         st.markdown("<div class='dashboard-card'>", unsafe_allow_html=True)
         n_nazev = st.text_input("Název události (např. Výroční schůze, Cvičení dýchací techniky)")
