@@ -130,7 +130,16 @@ if not st.session_state.logged_in:
         
         if st.button("Autorizovat vstup", type="primary", use_container_width=True):
             if login_input and login_heslo:
-                res = supabase.table("uzivatele").select("*, sbory(nazev_sdh, iban)").or_(f"email.eq.{login_input},prezdivka.eq.{login_input}").execute()
+                # Bezpečný dvoukrokový dotaz - nejprve zkusíme e-mail
+                res = supabase.table("uzivatele").select("*, sbory(nazev_sdh, iban)").eq("email", login_input).execute()
+                
+                # Pokud podle e-mailu nenajdeme, zkusíme přezdívku (pokud v DB sloupec existuje)
+                if not res.data:
+                    try:
+                        res = supabase.table("uzivatele").select("*, sbory(nazev_sdh, iban)").eq("prezdivka", login_input).execute()
+                    except Exception:
+                        res.data = [] # Ošetření případu, kdy sloupec prezdivka v DB vůbec není
+
                 if res.data:
                     user = res.data[0]
                     if bcrypt.checkpw(login_heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
@@ -144,8 +153,10 @@ if not st.session_state.logged_in:
                         st.session_state.sdh_iban = user["sbory"].get("iban", "CZ1234567890123456789012")
                         st.session_state.user_avatar = ziskej_avatar_uzivatele(user["id"])
                         st.rerun()
-                    else: st.error("Zadané heslo není správné.")
-                else: st.error("Uživatel neexistuje.")
+                    else: 
+                        st.error("Zadané heslo není správné.")
+                else: 
+                    st.error("Uživatel s tímto e-mailem nebo přezdívkou neexistuje.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     with tab2:
