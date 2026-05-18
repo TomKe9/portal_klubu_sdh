@@ -126,7 +126,7 @@ if st.session_state.logged_in:
 # ==========================================
 # 4. NEPŘIHLÁŠENÝ UŽIVATEL (Login/Registrace)
 # ==========================================
-else:
+if not st.session_state.logged_in:
     t1, t2 = st.tabs(["🔒 Přihlášení", "📝 Registrace"])
     with t1:
         with st.container(border=True):
@@ -173,7 +173,7 @@ else:
 # ==========================================
 # 5. KATEGORIE & MODULY (Přihlášený uživatel)
 # ==========================================
-elif st.session_state.logged_in:
+if st.session_state.logged_in:
 
     # --- POPLACH & VÝJEZD ---
     if volba == "🚨 POPLACH & Výjezd":
@@ -244,7 +244,7 @@ elif st.session_state.logged_in:
             for a in seznam:
                 with st.expander(f"{a['datum']} - {a['nazev_akce']} ({a['typ_akce']})"):
                     st.write(a.get("poznamka", ""))
-                    if st.button("Zapsat účast", key=f"btn_{a['id']}"): st.toast("Účast zaznamenána!") # Zjednodušená ukázka
+                    if st.button("Zapsat účast", key=f"btn_{a['id']}"): st.toast("Účast zaznamenána!")
         
         with t_budouci: vykresli_akce([a for a in akce if a["datum"] >= dnes])
         with t_minule: vykresli_akce([a for a in akce if a["datum"] < dnes])
