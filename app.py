@@ -8,119 +8,6 @@ from supabase import create_client, Client
 from streamlit_calendar import calendar
 
 # ==========================================
-# SQL SCHÉMA PRO INICIALIZACI SUPABASE
-# ==========================================
-"""
-Zkopírujte tento skript do SQL Editoru v Supabase před spuštěním aplikace:
-
-CREATE TABLE sbory (
-    id SERIAL PRIMARY KEY,
-    nazev_sdh TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE uzivatele (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE SET NULL,
-    jmeno TEXT NOT NULL,
-    prijmeni TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    prezdivka TEXT,
-    heslo_hash TEXT NOT NULL,
-    role TEXT DEFAULT 'člen',
-    avatar TEXT DEFAULT '🧑‍🚒',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE poplachy (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
-    udalost TEXT NOT NULL,
-    misto TEXT NOT NULL,
-    aktivni BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE poplach_reakce (
-    id SERIAL PRIMARY KEY,
-    poplach_id INT REFERENCES poplachy(id) ON DELETE CASCADE,
-    uzivatel_id INT REFERENCES uzivatele(id) ON DELETE CASCADE,
-    stav TEXT NOT NULL,
-    cas_prijezdu TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(poplach_id, uzivatel_id)
-);
-
-CREATE TABLE akce (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
-    nazev_akce TEXT NOT NULL,
-    typ_akce TEXT NOT NULL,
-    datum DATE NOT NULL,
-    cas TEXT,
-    pouzita_technika TEXT,
-    cislo_vyjezdu TEXT,
-    poznamka TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE dochazka (
-    id SERIAL PRIMARY KEY,
-    akce_id INT REFERENCES akce(id) ON DELETE CASCADE,
-    uzivatel_id INT REFERENCES uzivatele(id) ON DELETE CASCADE,
-    status TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(akce_id, uzivatel_id)
-);
-
-CREATE TABLE nastenka (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
-    autor_jmeno TEXT NOT NULL,
-    nadpis TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE sklad (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
-    nazev TEXT NOT NULL,
-    velikost TEXT,
-    prideleno_uzivatel_id INT REFERENCES uzivatele(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE kvalifikace (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
-    uzivatel_id INT REFERENCES uzivatele(id) ON DELETE CASCADE,
-    typ TEXT NOT NULL,
-    platnost_do DATE NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE technika (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
-    nazev TEXT NOT NULL,
-    spz TEXT,
-    revize_do DATE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE vodni_zdroje (
-    id SERIAL PRIMARY KEY,
-    sdh_id INT REFERENCES sbory(id) ON DELETE CASCADE,
-    nazev TEXT NOT NULL,
-    typ TEXT NOT NULL,
-    latitude NUMERIC NOT NULL,
-    longitude NUMERIC NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-"""
-
-# ==========================================
 # 1. KONFIGURACE & INICIALIZACE SYSTÉMU
 # ==========================================
 st.set_page_config(
@@ -305,7 +192,7 @@ else:
     
     sekce_menu = {
         "🚨 OPERATIVNÍ MODULY": ["🚨 POPLACH & Výjezd", "📅 Plán akcí & Docházka", "📑 Kniha výjezdů & Export", "🗺️ Mapa vodních zdrojů"],
-        "📦 INTERNÍ ADM": ["📢 Nást健全ka sboru", "📦 Sklad & Výstroj OOP", "🎖️ Kvalifikace & Odbornost", "📊 Statistiky docházky", "🛠️ Technika & Revize", "🪙 Pokladna & Příspěvky", "🧑‍🚒 Seznam členů sboru", "⚙️ Moje nastavení"]
+        "📦 INTERNÍ ADM": ["📢 Nástěnka sboru", "📦 Sklad & Výstroj OOP", "🎖️ Kvalifikace & Odbornost", "📊 Statistiky docházky", "🛠️ Technika & Revize", "🪙 Pokladna & Příspěvky", "🧑‍🚒 Seznam členů sboru", "⚙️ Moje nastavení"]
     }
     if je_spravce: 
         sekce_menu["🛠️ ADMINISTRACE SBORU"] = ["⚙️ Správa sboru (Správce)"]
@@ -517,7 +404,7 @@ else:
     # MODUL: MAPA VODNÍCH ZDROJŮ
     # ==========================================
     elif volba == "🗺️ Mapa vodních zdrojů":
-        st.subheader("Hydrantová síť a odběrná místa pro doplňování CAS")
+        st.subheader("Hydrantová sítě a odběrná místa pro doplňování CAS")
         
         if je_spravce:
             with st.expander("➕ ZANÉST NOVÝ HYDRANT / ČERPACÍ STANOVIŠTĚ"):
