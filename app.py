@@ -9,44 +9,11 @@ import urllib.parse
 from streamlit_calendar import calendar
 
 # ==========================================
-# 1. KONFIGURACE STRÁNKY (PŮVODNÍ)
+# CRITICAL INFRASTRUCTURE
+# RESQ_PORTAL
 # ==========================================
-st.set_page_config(
-    page_title="RESQ Portal", 
-    page_icon="🚨", 
-    layout="wide"
-)
 
-# ==========================================
-# 2. SPRÁVA COOKIES (TRVALÉ PŘIHLÁŠENÍ)
-# ==========================================
-def nacti_trvale_prihlaseni():
-    """Načte uložené cookie a automaticky přihlásí uživatele při refreshování stránky."""
-    if "token_uzivatele" in st.context.cookies and not st.session_state.get("logged_in"):
-        try:
-            token_data = st.context.cookies["token_uzivatele"]
-            user_id = int(token_data)
-            res = supabase.table("uzivatele").select("*").eq("id", user_id).execute()
-            if res.data:
-                user = res.data[0]
-                sdh_nazev_db, sdh_iban_db = "Neznámý sbor", "CZ1234567890123456789012"
-                if user.get("sdh_id"):
-                    sbor_res = supabase.table("sbory").select("*").eq("id", user["sdh_id"]).execute()
-                    if sbor_res.data:
-                        sdh_nazev_db = sbor_res.data[0].get("nazev_sdh", sbor_res.data[0].get("nazev", "Sbor bez názvu"))
-                        sdh_iban_db = sbor_res.data[0].get("iban", "CZ1234567890123456789012")
-                
-                st.session_state.logged_in = True
-                st.session_state.user_id = user["id"]
-                st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
-                st.session_state.user_role = user["role"]
-                st.session_state.user_schvalen = user.get("schvalen", True)
-                st.session_state.sdh_id = user["sdh_id"]
-                st.session_state.sdh_nazev = sdh_nazev_db
-                st.session_state.sdh_iban = sdh_iban_db
-                st.session_state.user_avatar = ziskej_avatar_uzivatele(user["id"])
-        except Exception:
-            pass
+st.set_page_config(page_title="RESQ Portal", page_icon="🚨", layout="wide")
 
 # Inicializace session state
 if "logged_in" not in st.session_state:
@@ -65,12 +32,15 @@ SOUBOR_AVATARU = "profilovky_data.json"
 def nacti_vsechny_avatary():
     if os.path.exists(SOUBOR_AVATARU):
         try:
-            with open(SOUBOR_AVATARU, "r", encoding="utf-8") as f: return json.load(f)
-        except Exception: return {}
+            with open(SOUBOR_AVATARU, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
     return {}
 
 def ziskej_avatar_uzivatele(user_id):
-    return nacti_vsechny_avatary().get(str(user_id), "🧑‍🚒")
+    avatary = nacti_vsechny_avatary()
+    return avatary.get(str(user_id), "🧑‍🚒")
 
 def uloz_avatar_uzivatele(user_id, avatar_data):
     data = nacti_vsechny_avatary()
@@ -80,53 +50,48 @@ def uloz_avatar_uzivatele(user_id, avatar_data):
 
 @st.cache_resource
 def init_connection():
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
 supabase: Client = init_connection()
-
-# Spuštění kontroly cookies
-nacti_trvale_prihlaseni()
 
 def generuj_qr_kod_url(iban, castka, zprava):
     cistý_iban = re.sub(r'\s+', '', iban)
     zprava_url = urllib.parse.quote(zprava[:20])
     return f"https://api.paylibo.com/paylibo/generator/czech/image?accountNumber={cistý_iban[2:]}&bankCode={cistý_iban[2:6]}&amount={castka}&currency=CZK&message={zprava_url}"
 
-# Původní čistý nadpis
 st.title("RESQ Portal")
 
-# ==========================================
-# 3. PŘIHLAŠOVÁNÍ A REGISTRACE
-# ==========================================
+# PŘIHLAŠOVÁNÍ A REGISTRACE
 if not st.session_state.logged_in:
     tab1, tab2 = st.tabs(["Přihlášení", "Registrace"])
     
     with tab1:
-        login_input = st.text_input("E-mail nebo Přezdívka", key="login_username_input").strip()
-        login_heslo = st.text_input("Heslo", type="password", key="login_heslo_input")
-        
-        # POLÍČKO PRO TRVALÉ PŘIHLÁŠENÍ
-        pamatovat_si = st.checkbox("Zůstat přihlášen na tomto zařízení", value=True)
+        login_input = st.text_input("E-mail nebo Přezdívka").strip()
+        login_heslo = st.text_input("Heslo", type="password")
         
         if st.button("Přihlásit se", type="primary"):
             if login_input and login_heslo:
                 try:
                     res = supabase.table("uzivatele").select("*").eq("email", login_input).execute()
                     if not res.data:
-                        try: res = supabase.table("uzivatele").select("*").eq("prezdivka", login_input).execute()
-                        except Exception: res.data = []
+                        try:
+                            res = supabase.table("uzivatele").select("*").eq("prezdivka", login_input).execute()
+                        except Exception:
+                            res.data = []
 
                     if res.data:
                         user = res.data[0]
                         if bcrypt.checkpw(login_heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
-                            sdh_nazev_db, sdh_iban_db = "Neznámý sbor", "CZ1234567890123456789012"
+                            sdh_nazev_db = "Neznámý sbor"
+                            sdh_iban_db = "CZ1234567890123456789012"
                             if user.get("sdh_id"):
                                 sbor_res = supabase.table("sbory").select("*").eq("id", user["sdh_id"]).execute()
                                 if sbor_res.data:
                                     sdh_nazev_db = sbor_res.data[0].get("nazev_sdh", sbor_res.data[0].get("nazev", "Sbor bez názvu"))
                                     sdh_iban_db = sbor_res.data[0].get("iban", "CZ1234567890123456789012")
 
-                            # Uložení do Session State
                             st.session_state.logged_in = True
                             st.session_state.user_id = user["id"]
                             st.session_state.user_jmeno = f"{user['jmeno']} {user['prijmeni']}"
@@ -136,21 +101,20 @@ if not st.session_state.logged_in:
                             st.session_state.sdh_nazev = sdh_nazev_db
                             st.session_state.sdh_iban = sdh_iban_db
                             st.session_state.user_avatar = ziskej_avatar_uzivatele(user["id"])
-                            
-                            # ZÁPIS DO COOKIE
-                            if pamatovat_si:
-                                st.context.cookies["token_uzivatele"] = str(user["id"])
                             st.rerun()
-                        else: st.error("Nesprávné heslo.")
-                    else: st.error("Uživatel neexistuje.")
+                        else:
+                            st.error("Nesprávné heslo.")
+                    else:
+                        st.error("Uživatel neexistuje.")
                 except Exception as e:
-                    st.error(f"Chyba: {e}")
+                    st.error(f"Chyba spojení s databází: {e}")
 
     with tab2:
         try:
             sbory_res = supabase.table("sbory").select("*").execute()
             seznam_sboru = {s.get("nazev_sdh", s.get("nazev", "Sbor")): s["id"] for s in sbory_res.data} if sbory_res.data else {}
-        except Exception: seznam_sboru = {}
+        except Exception:
+            seznam_sboru = {}
             
         volba_sboru = st.radio("Sbor:", ["Přidat se k existujícímu sboru", "Zaregistrovat nový sbor"])
         
@@ -173,34 +137,36 @@ if not st.session_state.logged_in:
             if reg_jmeno and reg_prijmeni and reg_email and reg_heslo and (vybrany_sdh_id or novy_sbor_nazev):
                 try:
                     if volba_sboru == "Zaregistrovat nový sbor":
-                        try: sbor_ins = supabase.table("sbory").insert({"nazev_sdh": novy_sbor_nazev, "iban": novy_sbor_iban}).execute()
-                        except Exception: sbor_ins = supabase.table("sbory").insert({"nazev": novy_sbor_nazev, "iban": novy_sbor_iban}).execute()
+                        try:
+                            sbor_ins = supabase.table("sbory").insert({"nazev_sdh": novy_sbor_nazev, "iban": novy_sbor_iban}).execute()
+                        except Exception:
+                            sbor_ins = supabase.table("sbory").insert({"nazev": novy_sbor_nazev, "iban": novy_sbor_iban}).execute()
                         vybrany_sdh_id = sbor_ins.data[0]["id"]
                     
                     hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                     je_prvni = len(supabase.table("uzivatele").select("id").eq("sdh_id", vybrany_sdh_id).execute().data) == 0
                     
                     supabase.table("uzivatele").insert({
-                        "sdh_id": vybrany_sdh_id, "jmeno": reg_jmeno, "prijmeni": reg_prijmeni,
-                        "email": reg_email, "heslo_hash": hashed, "role": vybrana_role, "schvalen": je_prvni
+                        "sdh_id": vybrany_sdh_id,
+                        "jmeno": reg_jmeno,
+                        "prijmeni": reg_prijmeni,
+                        "email": reg_email,
+                        "heslo_hash": hashed,
+                        "role": vybrana_role,
+                        "schvalen": je_prvni
                     }).execute()
                     st.success("Registrace úspěšná. Počkejte na schválení velitelem.")
-                except Exception as e: st.error(f"Chyba při registraci: {e}")
+                except Exception as e:
+                    st.error(f"Chyba při registraci: {e}")
 
-# ==========================================
-# 4. ČEKÁNÍ NA SCHVÁLENÍ
-# ==========================================
+# ČEKÁNÍ NA SCHVÁLENÍ
 elif st.session_state.logged_in and not st.session_state.user_schvalen:
     st.warning(f"Váš účet čeká na schválení velitelem sboru {st.session_state.sdh_nazev}.")
     if st.button("Odhlásit se"):
-        if "token_uzivatele" in st.context.cookies:
-            del st.context.cookies["token_uzivatele"]
         st.session_state.logged_in = False
         st.rerun()
 
-# ==========================================
-# 5. HLAVNÍ PORTÁL (PO PŘIHLÁŠENÍ)
-# ==========================================
+# PO PŘIHLÁŠENÍ
 else:
     je_spravce = False
     try:
@@ -208,9 +174,9 @@ else:
         if (vlastnik_res.data and vlastnik_res.data[0]["id"] == st.session_state.user_id) or st.session_state.user_role == "velitel":
             je_spravce = True
     except Exception:
-        if st.session_state.user_role == "velitel": je_spravce = True
+        if st.session_state.user_role == "velitel":
+            je_spravce = True
 
-    # Původní zobrazení v sidebar
     st.sidebar.write(f"Uživatel: {st.session_state.user_avatar} {st.session_state.user_jmeno}")
     st.sidebar.write(f"Role: {st.session_state.user_role}")
     st.sidebar.write(f"Sbor: {st.session_state.sdh_nazev}")
@@ -231,7 +197,7 @@ else:
         
     volba = st.sidebar.radio("Menu", menu_polozky)
 
-    # --- POPLACHY ---
+    # POPLACHY
     if volba == "🚨 Poplach & Výjezd":
         st.header("Poplachy")
         if je_spravce:
@@ -244,12 +210,14 @@ else:
                             supabase.table("poplachy").update({"aktivni": False}).eq("sdh_id", st.session_state.sdh_id).execute()
                             supabase.table("poplachy").insert({"sdh_id": st.session_state.sdh_id, "udalost": pop_udalost, "misto": pop_misto}).execute()
                             st.rerun()
-                        except Exception as e: st.error(f"Chyba: {e}")
+                        except Exception as e:
+                            st.error(f"Chyba vyhlášení: {e}")
 
         try:
             pop_res = supabase.table("poplachy").select("*").eq("sdh_id", st.session_state.sdh_id).eq("aktivni", True).order("created_at", desc=True).limit(1).execute()
             aktivni_poplachy = pop_res.data
-        except Exception: aktivni_poplachy = []
+        except Exception:
+            aktivni_poplachy = []
         
         if aktivni_poplachy:
             aktivni_poplach = aktivni_poplachy[0]
@@ -273,7 +241,8 @@ else:
             try:
                 reakce_res = supabase.table("poplach_reakce").select("stav, cas_prijezdu, uzivatele(jmeno, prijmeni, role)").eq("poplach_id", aktivni_poplach["id"]).execute()
                 vsechny_reakce = reakce_res.data if reakce_res.data else []
-            except Exception: vsechny_reakce = []
+            except Exception:
+                vsechny_reakce = []
 
             if vsechny_reakce:
                 st.subheader("Reakce členů:")
@@ -281,12 +250,12 @@ else:
                 with col_r1:
                     st.write("**Jedou:**")
                     for r in vsechny_reakce:
-                        if r["stav"] == "Jedu na zbrojnici" and r.get("uzivatele"): 
+                        if r["stav"] == "Jedu na zbrojnici" and r.get("uzivatele"):
                             st.write(f"✅ {r['uzivatele']['jmeno']} {r['uzivatele']['prijmeni']} ({r['cas_prijezdu']})")
                 with col_r2:
                     st.write("**Nejedou:**")
                     for r in vsechny_reakce:
-                        if r["stav"] == "Nedorazím" and r.get("uzivatele"): 
+                        if r["stav"] == "Nedorazím" and r.get("uzivatele"):
                             st.write(f"❌ {r['uzivatele']['jmeno']} {r['uzivatele']['prijmeni']}")
             
             if je_spravce and st.button("Ukončit poplach"):
@@ -295,18 +264,23 @@ else:
         else:
             st.success("Žádný aktivní poplach.")
 
-    # --- PLÁN AKCÍ ---
+    # PLÁN AKCÍ
     elif volba == "📅 Plán akcí & Docházka":
         st.header("Plán akcí")
         try:
             akce_res = supabase.table("akce").select("*").eq("sdh_id", st.session_state.sdh_id).order("datum").execute()
             vsechny_akce = akce_res.data if akce_res.data else []
-        except Exception: vsechny_akce = []
+        except Exception:
+            vsechny_akce = []
         
         kalendar_udalosti = []
         for akce in vsechny_akce:
             kalendar_udalosti.append({
-                "id": str(akce["id"]), "title": akce["nazev_akce"], "start": akce["datum"], "end": akce["datum"], "allDay": True
+                "id": str(akce["id"]),
+                "title": akce["nazev_akce"],
+                "start": akce["datum"],
+                "end": akce["datum"],
+                "allDay": True
             })
         
         calendar(events=kalendar_udalosti, options={"locale": "cs", "firstDay": 1}, key="portal_calendar")
@@ -320,8 +294,10 @@ else:
                     stav_moje = "Nenahlášeno"
                     try:
                         doch_res = supabase.table("dochazka").select("status").eq("akce_id", akce["id"]).eq("uzivatel_id", st.session_state.user_id).execute()
-                        if doch_res.data: stav_moje = doch_res.data[0]["status"]
-                    except Exception: pass
+                        if doch_res.data:
+                            stav_moje = doch_res.data[0]["status"]
+                    except Exception:
+                        pass
                     
                     st.write(f"Moje docházka: **{stav_moje}**")
                     c1, c2 = st.columns(2)
@@ -332,13 +308,14 @@ else:
                         supabase.table("dochazka").upsert({"akce_id": akce["id"], "uzivatel_id": st.session_state.user_id, "status": "Nejdu"}, on_conflict="akce_id,uzivatel_id").execute()
                         st.rerun()
 
-    # --- POKLADNA ---
+    # POKLADNA
     elif volba == "🪙 Pokladna & Příspěvky":
         st.header("Pokladna")
         try:
             trans_res = supabase.table("pokladna").select("*").eq("sdh_id", st.session_state.sdh_id).execute()
             vsechny_trans = trans_res.data if trans_res.data else []
-        except Exception: vsechny_trans = []
+        except Exception:
+            vsechny_trans = []
         
         prijmy = sum(float(t["castka"]) for t in vsechny_trans if t["smer"] == "Příjem")
         vydaje = sum(float(t["castka"]) for t in vsechny_trans if t["smer"] == "Výdaj")
@@ -353,7 +330,7 @@ else:
         st.image(qr_url, caption="Naskenujte pro platbu v bance")
         st.code(f"Účet: {st.session_state.sdh_iban}\nZpráva: {msg}")
 
-    # --- NÁSTĚNKA ---
+    # NÁSTĚNKA
     elif volba == "📢 Nástěnka sboru":
         st.header("Nástěnka")
         if je_spravce:
@@ -364,8 +341,10 @@ else:
                     supabase.table("nastenka").insert({"sdh_id": st.session_state.sdh_id, "autor_jmeno": st.session_state.user_jmeno, "nadpis": nadpis, "text": text, "dulezite": False}).execute()
                     st.rerun()
                     
-        try: zpravy = supabase.table("nastenka").select("*").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=True).execute().data
-        except Exception: zpravy = []
+        try:
+            zpravy = supabase.table("nastenka").select("*").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=True).execute().data
+        except Exception:
+            zpravy = []
             
         for z in (zpravy if zpravy else []):
             st.subheader(z['nadpis'])
@@ -373,14 +352,16 @@ else:
             st.caption(f"Autor: {z['autor_jmeno']} | Datum: {z['created_at'][:10]}")
             st.markdown("---")
 
-    # --- SKLAD ---
+    # SKLAD
     elif volba == "📦 Sklad & Výstroj OOP":
         st.header("Sklad materiálu")
         try:
             vsechen_sklad = supabase.table("sklad").select("*, uzivatele(jmeno, prijmeni)").eq("sdh_id", st.session_state.sdh_id).execute().data
         except Exception:
-            try: vsechen_sklad = supabase.table("sklad").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data
-            except Exception: vsechen_sklad = []
+            try:
+                vsechen_sklad = supabase.table("sklad").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data
+            except Exception:
+                vsechen_sklad = []
         
         if je_spravce:
             with st.expander("Přidat položku"):
@@ -394,11 +375,13 @@ else:
             stav = f"Vydáno: {i['uzivatele']['jmeno']} {i['uzivatele']['prijmeni']}" if i.get('uzivatele') else "Na skladě"
             st.write(f"📦 **{i['nazev']}** (Velikost: {i['velikost']}) - {stav}")
 
-    # --- TECHNIKA ---
+    # TECHNIKA
     elif volba == "🛠️ Technika & Revize":
         st.header("Technika a vozidla")
-        try: tech = supabase.table("technika").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data
-        except Exception: tech = []
+        try:
+            tech = supabase.table("technika").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data
+        except Exception:
+            tech = []
         
         if je_spravce:
             with st.expander("Přidat techniku"):
@@ -411,17 +394,19 @@ else:
         for t in (tech if tech else []):
             st.write(f"🚒 **{t['nazev']}** - Platnost STK/Revize: {t['stk_revize']}")
 
-    # --- SEZNAM ČLENŮ ---
+    # SEZNAM ČLENŮ
     elif volba == "🧑‍🚒 Seznam členů":
         st.header("Seznam členů")
-        try: clenove = supabase.table("uzivatele").select("jmeno, prijmeni, role, schvalen").eq("sdh_id", st.session_state.sdh_id).execute().data
-        except Exception: clenove = []
+        try:
+            clenove = supabase.table("uzivatele").select("jmeno, prijmeni, role, schvalen").eq("sdh_id", st.session_state.sdh_id).execute().data
+        except Exception:
+            clenove = []
             
         for c in (clenove if clenove else []):
             if c.get("schvalen", True):
                 st.write(f"🧑‍🚒 {c['jmeno']} {c['prijmeni']} - Role: {c['role']}")
 
-    # --- MOJE NASTAVENÍ ---
+    # MOJE NASTAVENÍ
     elif volba == "⚙️ Moje nastavení":
         st.header("Moje nastavení")
         strav_avatar = ziskej_avatar_uzivatele(st.session_state.user_id)
@@ -434,19 +419,18 @@ else:
             st.rerun()
         
         if st.button("Odhlásit se", type="primary"):
-            # Smazání cookie při manuálním odhlášení
-            if "token_uzivatele" in st.context.cookies:
-                del st.context.cookies["token_uzivatele"]
             st.session_state.logged_in = False
             st.rerun()
 
-    # --- ADMINISTRACE VELITELE ---
+    # ADMINISTRACE VELITELE
     elif volba == "⚙️ Správa sboru (Velitel)" and je_spravce:
         st.header("Správa sboru")
         
         st.subheader("Členové čekající na schválení")
-        try: neschvaleni = supabase.table("uzivatele").select("id, jmeno, prijmeni, email, role").eq("sdh_id", st.session_state.sdh_id).eq("schvalen", False).execute().data
-        except Exception: neschvaleni = []
+        try:
+            neschvaleni = supabase.table("uzivatele").select("id, jmeno, prijmeni, email, role").eq("sdh_id", st.session_state.sdh_id).eq("schvalen", False).execute().data
+        except Exception:
+            neschvaleni = []
         
         if neschvaleni:
             for u in neschvaleni:
@@ -468,8 +452,13 @@ else:
             if n_nazev:
                 try:
                     supabase.table("akce").insert({
-                        "sdh_id": st.session_state.sdh_id, "datum": str(n_datum), "nazev_akce": n_nazev, "typ_akce": n_typ, "poznamka": n_poznamka
+                        "sdh_id": st.session_state.sdh_id,
+                        "datum": str(n_datum),
+                        "nazev_akce": n_nazev,
+                        "typ_akce": n_typ,
+                        "poznamka": n_poznamka
                     }).execute()
                     st.success("Akce vytvořena.")
                     st.rerun()
-                except Exception as e: st.error(f"Chyba: {e}")
+                except Exception as e:
+                    st.error(f"Chyba: {e}")
