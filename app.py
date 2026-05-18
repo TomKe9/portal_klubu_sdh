@@ -15,6 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Profesionální sportovní vzhled
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght=400;500;600;700;800&display=swap');
@@ -71,7 +72,7 @@ if st.query_params.get("user_id") and not st.session_state.logged_in:
         st.query_params.clear()
 
 st.title("⚡ SportManažer SDH")
-st.caption("Otevřený systém pro analýzu časů, správu nářadí a soupisky týmu")
+st.caption("Otevřený systém pro analýzu časů, správu nářadí a soupisky týmu v požárním sportu")
 st.write("")
 
 # ==========================================
@@ -138,7 +139,8 @@ else:
     with st.sidebar.container(border=True):
         st.markdown(f"### 🏃‍♂️ {st.session_state.user_jmeno}")
         st.caption(f"Klub: {st.session_state.sdh_nazev}")
-        st.badge(text="Režim: Správce týmu", color="green")
+        # OPRAVENO: Nahrazeno standardním streamlit prvkem místo nefunkčního st.badge
+        st.success("🔓 Režim: Správce týmu")
     
     menu = ["🏆 Výsledky & Tréninky", "🏃 Soupiska & Posty", "⚡ Sportovní nářadí & Mašina"]
     volba = st.sidebar.radio("Sportovní menu", menu, key="stranka")
@@ -150,7 +152,7 @@ else:
         st.rerun()
 
     # ==========================================
-    # MODUL: VÝSLEDKY & TRÉNINKY (Kdokoli může zapisovat)
+    # MODUL: VÝSLEDKY & TRÉNINKY
     # ==========================================
     if volba == "🏆 Výsledky & Tréninky":
         st.subheader("Tréninkový deník a stopky útoků")
@@ -179,11 +181,13 @@ else:
                         }).execute()
                         st.success("Pokus úspěšně zapsán do Supabase!")
                         st.rerun()
-                    except Exception as e: st.error(f"Chyba zápisu: {e}")
+                    except Exception as e: 
+                        st.error(f"Zápis selhal. Zkontroluj, zda máš v Supabase vytvořenou tabulku 'sportovni_pokusy'. Detaily: {e}")
 
         try:
             pokusy = supabase.table("sportovni_pokusy").select("*").eq("sbor_id", st.session_state.sdh_id).order("created_at", desc=True).execute().data or []
-        except Exception: pokusy = []
+        except Exception: 
+            pokusy = []
 
         if pokusy:
             df = pd.DataFrame(pokusy)
@@ -213,7 +217,7 @@ else:
             st.info("Zatím nebyly zapsány žádné pokusy.")
 
     # ==========================================
-    # MODUL: SOUPISKA & POSTY (Kdokoli může upravovat)
+    # MODUL: SOUPISKA & POSTY
     # ==========================================
     elif volba == "🏃 Soupiska & Posty":
         st.subheader("Rozdělení postů na požární útok")
@@ -221,7 +225,8 @@ else:
         try:
             zavodnici = supabase.table("uzivatele").select("id, jmeno, prijmeni").eq("sdh_id", st.session_state.sdh_id).execute().data or []
             sestava = supabase.table("sestava_tymu").select("*").execute().data or []
-        except Exception: zavodnici, sestava = [], []
+        except Exception: 
+            zavodnici, sestava = [], []
         
         slovnik_zavodniku = {f"{z['jmeno']} {z['prijmeni']}": z["id"] for z in zavodnici}
         sestava_dict = {s["uzivatel_id"]: s for s in sestava}
@@ -241,7 +246,8 @@ else:
                         }, on_conflict="uzivatel_id").execute()
                         st.success("Post uložen!")
                         st.rerun()
-                    except Exception as e: st.error(f"Chyba: {e}")
+                    except Exception as e: 
+                        st.error(f"Uložení selhalo. Zkontroluj tabulku 'sestava_tymu' v Supabase. Detaily: {e}")
 
         st.write("### 🎽 Aktuální rozřazení týmu do pozic")
         if zavodnici:
@@ -257,7 +263,7 @@ else:
             st.dataframe(pd.DataFrame(tabulka_sestavy), use_container_width=True, hide_index=True)
 
     # ==========================================
-    # MODUL: SPORTOVNÍ NÁŘADÍ (Kdokoli může přidávat)
+    # MODUL: SPORTOVNÍ NÁŘADÍ
     # ==========================================
     elif volba == "⚡ Sportovní nářadí & Mašina":
         st.subheader("Technický stav sportovního materiálu (Nářadí)")
@@ -276,13 +282,17 @@ else:
                         }).execute()
                         st.success("Nářadí zařazeno!")
                         st.rerun()
-                    except Exception as e: st.error(f"Chyba: {e}")
+                    except Exception as e: 
+                        st.error(f"Uložení selhalo. Zkontroluj tabulku 'sportovni_material' v Supabase. Detaily: {e}")
 
         try:
             material = supabase.table("sportovni_material").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data or []
-        except Exception: material = []
+        except Exception: 
+            material = []
 
         if material:
             df_mat = pd.DataFrame(material)[["kategorie", "nazev", "parametry", "stav"]]
             df_mat.columns = ["Kategorie", "Název nářadí", "Parametry / Rozměry", "Technický stav"]
             st.dataframe(df_mat, use_container_width=True, hide_index=True)
+        else:
+            st.info("Sklad sportovního materiálu je zatím prázdný.")
