@@ -13,17 +13,24 @@ from streamlit_calendar import calendar
 # ==========================================
 st.set_page_config(page_title="Hasičský Portál JSDH / SDH", page_icon="🚒", layout="wide", initial_sidebar_state="expanded")
 
-# Jednotný CSS styl pro celou aplikaci
+# Opravené CSS styly s fixní barvou textu pro zamezení chyb v Dark Mode
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700&display=swap');
     html, body, [data-testid="stSidebar"] { font-family: 'Inter', sans-serif; }
-    .card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #f0f0f0; margin-bottom: 20px; }
-    .poplach-card { background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%); border-left: 6px solid #e53935; border-radius: 12px; padding: 24px; margin-bottom: 25px; }
-    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
-    .bg-success { background-color: #e8f5e9; color: #2e7d32; }
-    .bg-danger { background-color: #ffebee; color: #c62828; }
-    .bg-info { background-color: #e3f2fd; color: #1565c0; }
+    
+    /* Vynucení tmavého textu pro bílé karty */
+    .card { background: #ffffff !important; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e0e0e0; margin-bottom: 20px; }
+    .card h1, .card h2, .card h3, .card h4, .card p, .card span, .card small, .card b { color: #222222 !important; }
+    
+    /* Vynucení kontrastního textu pro poplachovou kartu */
+    .poplach-card { background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%) !important; border-left: 6px solid #e53935 !important; border-radius: 12px; padding: 24px; margin-bottom: 25px; }
+    .poplach-card h2 { color: #c62828 !important; margin: 10px 0 !important; font-weight: 700 !important; }
+    .poplach-card p, .poplach-card b { color: #333333 !important; }
+    .poplach-card small { color: #555555 !important; }
+    
+    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: #ffffff !important; }
+    .bg-danger { background-color: #e53935 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,7 +59,7 @@ def ziskej_avatar(user_id):
     return nacti_avatary().get(str(user_id), "🧑‍🚒")
 
 def generuj_qr(castka, zprava):
-    iban = "CZ1234567890123456789012" # Zde případně změňte za reálný sborový IBAN
+    iban = "CZ1234567890123456789012"
     return f"https://api.paylibo.com/paylibo/generator/czech/image?accountNumber={iban[2:]}&bankCode={iban[2:6]}&amount={castka}&currency=CZK&message={urllib.parse.quote(zprava[:20])}"
 
 # Nastavení výchozích hodnot stavu aplikace
@@ -72,13 +79,15 @@ def prihlas_uzivatele(user, zustat_prihlasen=False):
     if zustat_prihlasen: st.query_params["user_id"] = str(user["id"])
     st.rerun()
 
-# Automatické cookies přihlášení
+# Automatické přihlášení
 if "user_id" in st.query_params and not st.session_state.logged_in:
     res = supabase.table("uzivatele").select("*, sbory(nazev_sdh)").eq("id", st.query_params["user_id"]).execute()
     if res.data: prihlas_uzivatele(res.data[0])
 
-st.markdown("<div style='padding-bottom: 20px;'><h1 style='margin:0;'>🚒 Hasičský Portál</h1><p style='color:#666;'>Chytré řízení sboru a výjezdové jednotky</p></div>", unsafe_allow_html=True)
-
+# Nativní nadpisy bez HTML - přizpůsobí se světlému i tmavému režimu automaticky
+st.title("🚒 Hasičský Portál")
+st.caption("Chytré řízení sboru a výjezdové jednotky")
+st.write("")
 
 # ==========================================
 # 3. LOGIKA APLIKACE (ROZCESTNÍK)
@@ -132,15 +141,14 @@ if not st.session_state.logged_in:
 
 # --- VARIANTA B: UŽIVATEL JE PŘIHLÁŠEN ---
 else:
-    # Kontrola práv správce (první registrovaný člen sboru / zakladatel)
     vlastnik = supabase.table("uzivatele").select("id").eq("sdh_id", st.session_state.sdh_id).order("created_at").limit(1).execute()
     je_spravce = bool(vlastnik.data and vlastnik.data[0]["id"] == st.session_state.user_id)
 
-    # Konstrukce postranního panelu (Sidebar)
+    # Profil v sidebaru s fixním tmavým písmem (#31333F) a světlým boxem, čitelný vždy
     st.sidebar.markdown(f"""
-    <div style="display:flex; align-items:center; background:#f8f9fa; padding:12px; border-radius:10px; margin-bottom:15px; border:1px solid #eee;">
+    <div style="display:flex; align-items:center; background:#f0f2f6; padding:12px; border-radius:10px; margin-bottom:15px; border:1px solid #dddddd;">
         <span style="font-size:32px; margin-right:12px;">{st.session_state.user_avatar}</span>
-        <div><b>{st.session_state.user_jmeno}</b><br><span style="font-size:0.8rem; color:#e53935;">{st.session_state.user_role.upper()}</span></div>
+        <div><b style="color:#31333f;">{st.session_state.user_jmeno}</b><br><span style="font-size:0.8rem; color:#e53935; font-weight:600;">{st.session_state.user_role.upper()}</span></div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -153,7 +161,6 @@ else:
         
     st.sidebar.divider()
     
-    # Definice struktury Menu
     menu = {
         "🚨 AKTIVNÍ SLUŽBA & VÝJEZDY": ["🚨 POPLACH & Výjezd", "📅 Plán akcí & Docházka", "📑 Kniha výjezdů & Export", "🗺️ Mapa vodních zdrojů"],
         "📦 VNITŘNÍ CHOD & MAJETEK": ["📢 Nástěnka sboru", "📦 Sklad & Výstroj OOP", "🎖️ Kvalifikace & Odbornost", "📊 Statistiky docházky", "🛠️ Technika & Revize", "🪙 Pokladna & Příspěvky", "🧑‍🚒 Seznam členů sboru"]
@@ -161,7 +168,6 @@ else:
     if je_spravce: 
         menu["🛠️ ADMINISTRACE SBORU"] = ["⚙️ Správa sboru (Správce)"]
 
-    # Výběr stránky
     flat_menu = [item for sublist in menu.values() for item in sublist]
     if st.session_state.stranka not in flat_menu: 
         flat_menu.append(st.session_state.stranka)
@@ -200,8 +206,8 @@ else:
             st.markdown(f"""
             <div class="poplach-card">
                 <span class="badge bg-danger">⚠️ AKUTNÍ VÝJEZD JEDNOTKY</span>
-                <h2 style="color:#c62828; margin: 10px 0;">{p['udalost']}</h2>
-                <p style="font-size: 1.1em; margin:0;">📍 Místo: <b>{p['misto']}</b></p>
+                <h2>{p['udalost']}</h2>
+                <p>📍 Místo: <b>{p['misto']}</b></p>
                 <small>Čas vyhlášení: {p['created_at'][11:16]} ({p['created_at'][:10]})</small>
             </div>
             """, unsafe_allow_html=True)
@@ -223,12 +229,12 @@ else:
             
             rg1, rg2 = st.columns(2)
             with rg1:
-                st.markdown("<div class='card' style='border-top:4px solid #4caf50;'><h4>✅ Na cestě do zbrojnice</h4>", unsafe_allow_html=True)
+                st.markdown("<div class='card'><h4>✅ Na cestě do zbrojnice</h4>", unsafe_allow_html=True)
                 for r in [x for x in reakce if x["stav"] == "Jedu"]: 
                     st.write(f"🟢 **{r['uzivatele']['jmeno']} {r['uzivatele']['prijmeni']}** — {r['uzivatele']['role']} ({r['cas_prijezdu']})")
                 st.markdown("</div>", unsafe_allow_html=True)
             with rg2:
-                st.markdown("<div class='card' style='border-top:4px solid #f44336;'><h4>❌ Nedostupní členové</h4>", unsafe_allow_html=True)
+                st.markdown("<div class='card'><h4>❌ Nedostupní členové</h4>", unsafe_allow_html=True)
                 for r in [x for x in reakce if x["stav"] == "Nedorazím"]: 
                     st.write(f"🔴 **{r['uzivatele']['jmeno']} {r['uzivatele']['prijmeni']}** — {r['uzivatele']['role']}")
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -303,7 +309,13 @@ else:
 
         zpravy = supabase.table("nastenka").select("*").eq("sdh_id", st.session_state.sdh_id).order("created_at", desc=True).execute().data or []
         for z in zpravy:
-            st.markdown(f"<div class='card'><h3>{z['nadpis']}</h3><p>{z['text']}</p><small>Zveřejnil: <b>{z['autor_jmeno']}</b> ({z['created_at'][:10]})</small></div>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div class='card'>
+                <h3 style='margin-top:0;'>{z['nadpis']}</h3>
+                <p>{z['text']}</p>
+                <small>Zveřejnil: <b>{z['autor_jmeno']}</b> ({z['created_at'][:10]})</small>
+            </div>
+            """, unsafe_allow_html=True)
 
     # --- 6. SKLAD & VÝSTROJ OOP ---
     elif volba == "📦 Sklad & Výstroj OOP":
@@ -359,9 +371,15 @@ else:
             dnes = date.today().isoformat()
             for kv in kvalifikace_res.data:
                 je_propadla = kv["platnost_do"] < dnes
-                barva = "red" if je_propadla else "green"
+                barva = "#d32f2f" if je_propadla else "#2e7d32"
                 status = "🔴 Vypršela platnost" if je_propadla else "🟢 Platné osvědčení"
-                st.markdown(f"<div class='card' style='border-left: 4px solid {barva};'><b>{kv['uzivatele']['jmeno']} {kv['uzivatele']['prijmeni']}</b> — {kv['typ']}<br><span style='color:{barva}; font-size:0.9em;'>{status} (do: {kv['platnost_do']})</span></div>", unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class='card' style='border-left: 5px solid {barva} !important;'>
+                    <h3>{kv['uzivatele']['jmeno']} {kv['uzivatele']['prijmeni']}</h3>
+                    <p>Odbornost: <b>{kv['typ']}</b></p>
+                    <small style='color:{barva} !important; font-weight:600;'>{status} (do: {kv['platnost_do']})</small>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.info("Dosud nebyly zadány žádné kvalifikace.")
 
@@ -374,7 +392,7 @@ else:
             df_reakce = pd.DataFrame([{"Jméno": f"{r['uzivatele']['jmeno']} {r['uzivatele']['prijmeni']}", "Stav": r['stav']} for r in reakce_vse])
             st.dataframe(df_reakce.value_counts().unstack().fillna(0), use_container_width=True)
         else:
-            st.write("Žádná data pro generování grafů a statistik docházky nejsou k dispozici.")
+            st.write("Žrádná data pro generování grafů a statistik docházky nejsou k dispozici.")
 
     # --- 9. TECHNIKA & REVIZE ---
     elif volba == "🛠️ Technika & Revize":
@@ -388,7 +406,6 @@ else:
                     supabase.table("technika").insert({"sdh_id": st.session_state.sdh_id, "nazev": t_nazev, "spz": t_spz, "revize_do": t_stk.isoformat()}).execute()
                     st.rerun()
 
-        # Pokus o načtení techniky, pokud tabulka existuje
         try:
             tech_data = supabase.table("technika").select("*").eq("sdh_id", st.session_state.sdh_id).execute().data
             if tech_data:
