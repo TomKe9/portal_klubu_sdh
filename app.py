@@ -20,7 +20,7 @@ class ThemeManager:
         
         st.markdown("""
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght=400;500;600;700;800&display=swap');
             html, body, [data-testid="stSidebar"] { font-family: 'Plus Jakarta Sans', sans-serif; }
             div[data-testid="stMetric"] {
                 background: linear-gradient(135deg, rgba(255,75,75,0.05) 0%, rgba(255,165,0,0.05) 100%);
@@ -43,7 +43,7 @@ class ThemeManager:
 
 
 # ==============================================================================
-# 2. DATOVÁ VRSTVA (Ošetření chyb a garance datových struktur)
+# 2. DATOVÁ VRSTVA (S detailním výpisem chyb pro diagnostiku)
 # ==============================================================================
 class FireSportDB:
     def __init__(self):
@@ -55,11 +55,18 @@ class FireSportDB:
 
     def get_user_by_login(self, login: str) -> Optional[Dict[str, Any]]:
         try:
-            # Hledáme primárně přes e-mail (vyčištěný na lowercase bez mezer)
+            # Čisté vyhledání bez složitých podmínek
             res = self.client.table("uzivatele").select("*, sbory(nazev_sdh)").eq("email", login.strip().lower()).execute()
+            
+            # DIAGNOSTIKA: Vypíše do sidebaru, co přesně přišlo z DB
+            st.sidebar.info(f"🔍 DB Hledání e-mailu '{login}': vráceno {len(res.data)} záznamů.")
+            if res.data:
+                st.sidebar.json(res.data[0])
+                
             return res.data[0] if res.data else None
         except Exception as e:
-            st.error(f"Chyba při komunikaci s DB během přihlašování: {e}")
+            # KLÍČOVÉ: Ukáže přesnou SQL nebo síťovou chybu přímo v aplikaci
+            st.error(f"❌ CHYBA DATABÁZE při čtení uživatele: {e}")
             return None
 
     def get_all_sbory(self) -> List[Dict[str, Any]]:
@@ -74,14 +81,16 @@ class FireSportDB:
             res = self.client.table("sbory").insert({"nazev_sdh": nazev}).execute()
             return res.data[0]["id"] if res.data else None
         except Exception as e:
-            st.error(f"Chyba při vytváření nového sboru: {e}")
+            st.error(f"❌ CHYBA DATABÁZE při vytváření sboru: {e}")
             return None
 
     def register_user(self, u_data: Dict[str, Any]) -> Any:
         try:
-            return self.client.table("uzivatele").insert(u_data).execute()
+            res = self.client.table("uzivatele").insert(u_data).execute()
+            st.sidebar.success(f"💾 Registrace odeslána. Odpověď DB: {res.data}")
+            return res
         except Exception as e:
-            st.error(f"Chyba při zápisu registrace uživatele: {e}")
+            st.error(f"❌ CHYBA DATABÁZE při zápisu registrace: {e}")
             return None
 
     def get_pokusy(self, sdh_id: int) -> List[Dict[str, Any]]:
@@ -153,6 +162,10 @@ class FireSportApp:
 
     def render(self):
         ThemeManager.apply_custom_theme()
+        
+        # Diagnostická lišta nahoře v bočním panelu
+        st.sidebar.markdown("### 🛠️ Diagnostické centrum")
+        
         if not st.session_state.logged_in:
             self.render_auth_zone()
         else:
@@ -172,22 +185,32 @@ class FireSportApp:
                 if st.form_submit_button("Vstoupit do aplikace", type="primary", use_container_width=True):
                     if login and heslo:
                         user = self.db.get_user_by_login(login)
-                        if user and bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
-                            sbor_nazev = "Bez sboru"
-                            if user.get("sbory"):
-                                if isinstance(user["sbory"], list) and len(user["sbory"]) > 0:
-                                    sbor_nazev = user["sbory"][0].get("nazev_sdh", "Bez sboru")
-                                elif isinstance(user["sbory"], dict):
-                                    sbor_nazev = user["sbory"].get("nazev_sdh", "Bez sboru")
+                        if user:
+                            # Kontrola hesla s výpisem stavu do debugu
+                            heslo_match = bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8'))
+                            st.sidebar.write(f"🔐 Shoda hesla: {heslo_match}")
                             
-                            st.session_state.update({
-                                "logged_in": True, "user_id": user["id"],
-                                "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
-                                "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
-                            })
-                            st.success("🔓 Přihlášení úspěšné! Vstupuji do šatny...")
-                            st.rerun()
-                    st.error("🔒 Neplatné přihlašovací údaje nebo uživatel neexistuje. Zkuste to znovu přes Registraci.")
+                            if heslo_match:
+                                sbor_nazev = "Bez sboru"
+                                if user.get("sbory"):
+                                    if isinstance(user["sbory"], list) and len(user["sbory"]) > 0:
+                                        sbor_nazev = user["sbory"][0].get("nazev_sdh", "Bez sboru")
+                                    elif isinstance(user["sbory"], dict):
+                                        sbor_nazev = user["sbory"].get("nazev_sdh", "Bez sboru")
+                                
+                                st.session_state.update({
+                                    "logged_in": True, "user_id": user["id"],
+                                    "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
+                                    "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
+                                })
+                                st.success("🔓 Přihlášení úspěšné! Vstupuji do šatny...")
+                                st.rerun()
+                            else:
+                                st.error("❌ Zadané heslo neodpovídá šifrovanému otisku v databázi.")
+                        else:
+                            st.error(f"❌ Uživatel s e-mailem '{login}' nebyl v databázi vůbec nalezen. Zkontrolujte tabulku 'uzivatele' v Supabase rozhraní.")
+                    else:
+                        st.warning("⚠️ Vyplňte přihlašovací e-mail i heslo.")
 
         with tab_reg:
             with st.form("auth_reg_form"):
@@ -209,18 +232,20 @@ class FireSportApp:
 
                 if st.form_submit_button("Dokončit registraci a vytvořit účet", use_container_width=True):
                     if email and heslo_raw and jmeno and prijmeni:
-                        try:
-                            if typ_reg == "Vytvořit zcela nový sportovní klub/tým" and novy_sbor:
-                                sdh_id = self.db.insert_sbor(novy_sbor)
-                            
-                            hashed = bcrypt.hashpw(heslo_raw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                            self.db.register_user({
-                                "sdh_id": sdh_id, "jmeno": jmeno, "prijmeni": prijmeni, 
-                                "email": email, "heslo_hash": hashed, "role": "správce"
-                            })
-                            st.success("🎉 Registrace dokončena! Nyní se můžete vlevo přepnout na Přihlášení.")
-                        except Exception as e:
-                            st.error(f"Chyba při zápisu registrace: {e}")
+                        
+                        if typ_reg == "Vytvořit zcela nový sportovní klub/tým" and novy_sbor:
+                            sdh_id = self.db.insert_sbor(novy_sbor)
+                        
+                        hashed = bcrypt.hashpw(heslo_raw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                        
+                        reg_payload = {
+                            "sdh_id": sdh_id, "jmeno": jmeno, "prijmeni": prijmeni, 
+                            "email": email, "heslo_hash": hashed, "role": "správce"
+                        }
+                        
+                        res = self.db.register_user(reg_payload)
+                        if res:
+                            st.success("🎉 Registrace odeslána! Zkontrolujte v levém panelu, zda databáze potvrdila zápis.")
                     else:
                         st.warning("⚠️ Vyplňte prosím všechna povinná pole (Jméno, Příjmení, E-mail, Heslo).")
 
