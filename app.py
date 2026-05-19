@@ -127,7 +127,8 @@ class FireSportDB:
 
     def get_material(self, sdh_id: int) -> List[Dict[str, Any]]:
         try:
-            return self.client.table("sportovni_material").select("*").eq("sdh_id", sdh_id).execute().data or []
+            # Opraveno ze sdh_id na sbor_id podle databázové struktury
+            return self.client.table("sportovni_material").select("*").eq("sbor_id", sdh_id).execute().data or []
         except Exception as e:
             st.error(f"⚠️ Nepodařilo se načíst sklad nářadí: {e}")
             return []
@@ -159,11 +160,9 @@ class FireSportApp:
                 st.session_state[k] = v
 
     def handle_auto_login(self):
-        # Pokud už jsme přihlášeni v rámci aktuální session, nic neřešíme
         if st.session_state["logged_in"]:
             return
 
-        # Pokus o načtení emailu z cookies prohlížeče
         saved_email = self.cookie_manager.get(cookie="firesport_user_email")
         
         if saved_email:
@@ -185,8 +184,6 @@ class FireSportApp:
 
     def render(self):
         ThemeManager.apply_custom_theme()
-        
-        # Spuštění automatického přihlášení pomocí Cookies
         self.handle_auto_login()
         
         if not st.session_state.logged_in:
@@ -224,9 +221,7 @@ class FireSportApp:
                                 "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
                             })
                             
-                            # UKLÁDÁNÍ COOKIE: Zapamatuje si uživatele na 30 dní
                             self.cookie_manager.set("firesport_user_email", login, max_age=2592000)
-                            
                             st.success("🔓 Přihlášení úspěšné! Vstupuji...")
                             time.sleep(0.5)
                             st.rerun()
@@ -287,9 +282,7 @@ class FireSportApp:
                             "sdh_id": created_user["sdh_id"], "sdh_nazev": sbor_final_nazev
                         })
                         
-                        # UKLÁDÁNÍ COOKIE: Zapamatuje si e-mail z registrace na 30 dní
                         self.cookie_manager.set("firesport_user_email", email, max_age=2592000)
-                        
                         st.success("🎉 Účet úspěšně vytvořen! Vstupuji do systému...")
                         time.sleep(0.5)
                         st.rerun()
@@ -308,9 +301,8 @@ class FireSportApp:
             
             st.divider()
             
-            # Tlačítko odhlásit nyní smaže i Cookie v prohlížeči
             if st.button("Odhlásit se z kabiny", use_container_width=True, type="secondary"):
-                self.cookie_manager.delete("firesport_user_email") # Smazání trvalého přihlášení
+                self.cookie_manager.delete("firesport_user_email")
                 for k in ["logged_in", "user_id", "user_jmeno", "sdh_id", "sdh_nazev"]:
                     st.session_state[k] = None
                 st.session_state.logged_in = False
@@ -456,9 +448,13 @@ class FireSportApp:
                 
                 if st.form_submit_button("💾 Zařadit do evidence"):
                     if n_nazev:
+                        # Opraven klíč pro DB z sdh_id na sbor_id
                         self.db.insert_material({
-                            "sdh_id": st.session_state.sdh_id, "nazev": n_nazev, 
-                            "kategorie": n_typ, "stav": n_stav, "parametry": n_param
+                            "sbor_id": st.session_state.sdh_id, 
+                            "nazev": n_nazev, 
+                            "kategorie": n_typ, 
+                            "stav": n_stav, 
+                            "parametry": n_param
                         })
                         st.success("Nářadí bylo katalogizováno.")
                         st.rerun()
