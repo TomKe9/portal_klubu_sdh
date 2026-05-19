@@ -1,4 +1,5 @@
 streamlit
 supabase
 bcrypt
-streamlit-calendar
+pandas
+extra-streamlit-components
