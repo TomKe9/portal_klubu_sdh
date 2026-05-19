@@ -40,6 +40,9 @@ class ThemeManager:
             .badge-success {
                 background-color: #d4edda; color: #155724; padding: 4px 8px; border-radius: 6px; font-size: 0.85rem; font-weight: 600;
             }
+            .calendar-card {
+                background: #f8f9fa; border-left: 5px solid #ff4b4b; padding: 10px 15px; border-radius: 4px; margin-bottom: 8px;
+            }
         </style>
         """, unsafe_allow_html=True)
 
@@ -58,7 +61,6 @@ class FireSportDB:
     def get_user_by_login(self, login: str) -> Optional[Dict[str, Any]]:
         try:
             clean_login = login.strip().lower()
-            # Hledáme shodu buď v e-mailu, nebo v přezdívce
             res = self.client.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{clean_login},prezdivka.eq.{clean_login}").execute()
             return res.data[0] if res.data else None
         except Exception as e:
@@ -140,6 +142,22 @@ class FireSportDB:
 
     def insert_material(self, m_data: Dict[str, Any]) -> Any:
         return self.client.table("sportovni_material").insert(m_data).execute()
+
+    def get_kalendar(self, sdh_id: int) -> List[Dict[str, Any]]:
+        try:
+            # Načte akce od dnešního data dál, seřazené chronologicky
+            dnes = datetime.now().date().isoformat()
+            return self.client.table("kalendar_akci").select("*").eq("sbor_id", sdh_id).gte("datum", dnes).order("datum").order("cas").execute().data or []
+        except Exception as e:
+            st.error(f"⚠️ Nepodařilo se načíst plánované akce: {e}")
+            return []
+
+    def insert_kalendar_akce(self, a_data: Dict[str, Any]) -> Any:
+        try:
+            return self.client.table("kalendar_akci").insert(a_data).execute()
+        except Exception as e:
+            st.error(f"🔴 Chyba při zápisu akce do kalendáře: {e}")
+            return None
 
 
 # ==============================================================================
@@ -228,7 +246,6 @@ class FireSportApp:
                                 "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
                             })
                             
-                            # Pokud zaškrtnuto "Zůstat přihlášen", uložíme login (mail/přezdívku) do cookies
                             if remember_me:
                                 self.cookie_manager.set("firesport_user_login", login, max_age=2592000)
                             
@@ -259,7 +276,7 @@ class FireSportApp:
                 cc1, cc2 = st.columns(2)
                 jmeno = cc1.text_input("Jméno").strip()
                 prijmeni = cc2.text_input("Příjmení").strip()
-                prezdivka_reg = st.text_input("Přezdívka (volitelné – budete se jí moci přihlašovat)").strip().lower()
+                prezdivka_reg = st.text_input("Přezdívka (volitelné)").strip().lower()
                 email = st.text_input("E-mail (hlavní přihlašovací login)").strip().lower()
                 heslo_raw = st.text_input("Heslo do systému", type="password")
                 submit_reg = st.form_submit_button("Dokončit registraci a vytvořit účet", use_container_width=True)
@@ -293,10 +310,9 @@ class FireSportApp:
                             "user_jmeno": f"{created_user['jmeno']} {created_user['prijmeni']}",
                             "user_prezdivka": created_user.get("prezdivka", "") or "",
                             "user_email": created_user["email"],
-                            "sdh_id": created_user["sdh_id"], "sbor_final_nazev": sbor_final_nazev
+                            "sdh_id": created_user["sdh_id"], "sdh_nazev": sbor_final_nazev
                         })
                         
-                        # Automaticky držíme přihlášení i po registraci
                         self.cookie_manager.set("firesport_user_login", email, max_age=2592000)
                         st.success("🎉 Účet úspěšně vytvořen! Vstupuji do systému...")
                         time.sleep(0.5)
@@ -340,54 +356,71 @@ class FireSportApp:
             self.view_profil_settings()
 
     # ==============================================================================
-    # POHLED: NASTAVENÍ PROFILU (NOVÉ)
-    # ==============================================================================
-    def view_profil_settings(self):
-        st.header("⚙️ Nastavení vašeho sportovního profilu")
-        st.caption("Zde můžete spravovat své osobní údaje a nastavit si jedinečnou přezdívku pro rychlé přihlášení.")
-        
-        with st.form("profile_update_form"):
-            st.write("### Osobní identifikátory")
-            new_prezdivka = st.text_input("Vaše přezdívka (bez mezer)", value=st.session_state.user_prezdivka, placeholder="např. strojnik_tomas").strip().lower()
-            
-            st.divider()
-            st.write("### Kontaktní a evidenční údaje")
-            c1, c2 = st.columns(2)
-            curr_jmeno = c1.text_input("Jméno", value=st.session_state.user_jmeno.split()[0] if st.session_state.user_jmeno else "")
-            curr_prijmeni = c2.text_input("Příjmení", value=st.session_state.user_jmeno.split()[1] if len(st.session_state.user_jmeno.split()) > 1 else "")
-            
-            st.text_input("E-mailová adresa (nelze měnit)", value=st.session_state.user_email, disabled=True)
-            
-            save_profile = st.form_submit_button("💾 Uložit změny v profilu", type="primary")
-            
-        if save_profile:
-            payload = {
-                "jmeno": curr_jmeno,
-                "prijmeni": curr_prijmeni,
-                "prezdivka": new_prezdivka if new_prezdivka else None
-            }
-            
-            success = self.db.update_user_profile(st.session_state.user_id, payload)
-            if success:
-                st.session_state["user_jmeno"] = f"{curr_jmeno} {curr_prijmeni}"
-                st.session_state["user_prezdivka"] = new_prezdivka
-                
-                # Aktualizujeme cookie v případě, že má aktivní trvalé přihlášení, aby se přihlásil i pod novým jménem
-                if self.cookie_manager.get(cookie="firesport_user_login"):
-                    login_to_save = new_prezdivka if new_prezdivka else st.session_state.user_email
-                    self.cookie_manager.set("firesport_user_login", login_to_save, max_age=2592000)
-                    
-                st.success("✅ Profil byl úspěšně aktualizován!")
-                time.sleep(0.5)
-                st.rerun()
-
-    # ==============================================================================
-    # POHLED 1: VÝSLEDKY & TRÉNINKY
+    # POHLED: VÝSLEDKY, TRÉNINKY & MINI KALENDÁŘ
     # ==============================================================================
     def view_vysledky(self):
-        st.header("🏆 Tréninkový deník & Telemetrie útoků")
+        st.header("🏆 Týmový deník & Telemetrie útoků")
         
-        with st.expander("⏱️ MĚŘENÍ: ZAPSAT NOVÝ POKUS / POKROČILÁ DATA", expanded=False):
+        # --- SEKCE MINI KALENDÁŘE ---
+        col_cal, col_add = st.columns([2, 1])
+        
+        with col_cal:
+            st.subheader("📅 Nadcházející akce týmu")
+            akce = self.db.get_kalendar(st.session_state.sdh_id)
+            if akce:
+                for a in akce:
+                    # Formátování zobrazení data a času
+                    try:
+                        datum_raw = datetime.strptime(a["datum"], "%Y-%m-%d").strftime("%d. %m. %Y")
+                    except:
+                        datum_raw = a["datum"]
+                        
+                    cas_raw = a["cas"][:5] if a.get("cas") else "Čas neurčen"
+                    ikona = "🏃‍♂️" if a["typ_akce"] == "Trénink" else "🔥"
+                    
+                    st.markdown(f"""
+                    <div class="calendar-card" style="border-left-color: {'#ff8c00' if a['typ_akce'] == 'Trénink' else '#ff4b4b'};">
+                        <strong>{ikona} {a['typ_akce']}: {a['nazev']}</strong><br/>
+                        ⏱️ {datum_raw} v {cas_raw} | 📍 Místo: {a.get('misto', 'Nespecifikováno')}<br/>
+                        <small style="color: #666;">📝 {a.get('poznamka', '') or 'Bez poznámky.'}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("Na nejbližší dny nejsou naplánované žádné tréninky ani závody.")
+                
+        with col_add:
+            st.subheader("🛠️ Plánovač")
+            with st.expander("➕ Přidat událost", expanded=False):
+                with st.form("novy_kalendar_form", clear_on_submit=True):
+                    a_typ = st.selectbox("Typ akce", ["Trénink", "Soutěž"])
+                    a_nazev = st.text_input("Název akce", placeholder="např. Příprava základna / Extraliga")
+                    a_datum = st.date_input("Datum", datetime.now().date())
+                    a_cas = st.time_input("Čas zahájení")
+                    a_misto = st.text_input("Lokalita / Místo")
+                    a_poznamka = st.text_area("Bližší info (např. s sebou tretry)", height=70)
+                    
+                    if st.form_submit_button("Uložit do kalendáře", use_container_width=True):
+                        if a_nazev:
+                            self.db.insert_kalendar_akce({
+                                "sbor_id": st.session_state.sdh_id,
+                                "typ_akce": a_typ,
+                                "nazev": a_nazev,
+                                "datum": a_datum.isoformat(),
+                                "cas": a_cas.strftime("%H:%M:%S"),
+                                "misto": a_misto,
+                                "poznamka": a_poznamka
+                            })
+                            st.success("Akce byla uložena!")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("Vyplňte prosím název akce.")
+
+        st.divider()
+
+        # --- TELEMETRIE ÚTOKŮ ---
+        st.subheader("⏱️ Telemetrie měřených pokusů")
+        with st.expander("⏱️ ZAPSAT NOVÝ DOSAŽENÝ ČAS / POKUS", expanded=False):
             with st.form("pokus_form", clear_on_submit=True):
                 c1, c2 = st.columns(2)
                 f_typ = c1.selectbox("Typ měřené aktivity", ["Trénink - Útok", "Závod - Extraliga", "Závod - Okresní liga", "Pohárová soutěž"])
@@ -398,8 +431,8 @@ class FireSportApp:
                 f_levy = cc2.number_input("Levý proud (s)", min_value=0.0, max_value=60.0, value=14.20, step=0.01, format="%.2f")
                 f_pravy = cc3.number_input("Pravý proud (s)", min_value=0.0, max_value=60.0, value=14.50, step=0.01, format="%.2f")
                 
-                f_np = st.checkbox("⚠️ Neplatný pokus (NP / Nedokončeno / Diskvalifikace)")
-                f_not = st.text_input("Zápis a analýza chyb (např. prostřik 0.3s vpravo)")
+                f_np = st.checkbox("⚠️ Neplatný pokus (NP / Nedokončeno)")
+                f_not = st.text_input("Zápis a analýza chyb (např. prostřik vpravo)")
                 
                 if st.form_submit_button("⚡ Odeslat data do cloudu", type="primary"):
                     vysledny = max(f_levy, f_pravy) if not f_np else 0.0
@@ -409,6 +442,7 @@ class FireSportApp:
                         "vysledny_cas": vysledny, "diskvalifikace": f_np, "poznamka": f_not
                     })
                     st.success("🎯 Data úspěšně odeslána.")
+                    time.sleep(0.5)
                     st.rerun()
 
         if st.session_state.sdh_id:
@@ -431,7 +465,7 @@ class FireSportApp:
                     m2.metric("⏱️ Průměrný čas útoku", "N/A")
                 m3.metric("🏃 Celkem pokusů", len(df))
                 
-                st.write("### 📊 Detailní telemetrie pokusů")
+                st.write("### 📊 Detailní přehled pokusů")
                 
                 df["datum"] = pd.to_datetime(df["created_at"], errors="coerce").dt.date
                 df["prostrik"] = (df["cas_levy_proud"].astype(float) - df["cas_pravy_proud"].astype(float)).abs()
@@ -455,11 +489,9 @@ class FireSportApp:
                     },
                     hide_index=True, use_container_width=True
                 )
-            else:
-                st.info("💡 Databáze pokusů vašeho sboru je prozatím prázdná.")
 
     # ==============================================================================
-    # POHLED 2: SOUPISKA & POSTY
+    # POHLED: SOUPISKA & POSTY
     # ==============================================================================
     def view_soupiska(self):
         st.header("🏃 Sestava týmu & Taktická tabule")
@@ -499,7 +531,7 @@ class FireSportApp:
             st.dataframe(pd.DataFrame(sestava_data), use_container_width=True, hide_index=True)
 
     # ==============================================================================
-    # POHLED 3: SPORTOVNÍ NÁŘADÍ
+    # POHLED: SPORTOVNÍ NÁŘADÍ
     # ==============================================================================
     def view_naradi(self):
         st.header("⚡ Sklad sportovního materiálu & Speciály")
@@ -540,6 +572,47 @@ class FireSportApp:
                 },
                 use_container_width=True, hide_index=True
             )
+
+    # ==============================================================================
+    # POHLED: NASTAVENÍ PROFILU
+    # ==============================================================================
+    def view_profil_settings(self):
+        st.header("⚙️ Nastavení vašeho sportovního profilu")
+        st.caption("Zde můžete spravovat své osobní údaje a nastavit si jedinečnou přezdívku pro rychlé přihlášení.")
+        
+        with st.form("profile_update_form"):
+            st.write("### Osobní identifikátory")
+            new_prezdivka = st.text_input("Vaše přezdívka (bez mezer)", value=st.session_state.user_prezdivka, placeholder="např. strojnik_tomas").strip().lower()
+            
+            st.divider()
+            st.write("### Kontaktní a evidenční údaje")
+            c1, c2 = st.columns(2)
+            curr_jmeno = c1.text_input("Jméno", value=st.session_state.user_jmeno.split()[0] if st.session_state.user_jmeno else "")
+            curr_prijmeni = c2.text_input("Příjmení", value=st.session_state.user_jmeno.split()[1] if len(st.session_state.user_jmeno.split()) > 1 else "")
+            
+            st.text_input("E-mailová adresa (nelze měnit)", value=st.session_state.user_email, disabled=True)
+            
+            save_profile = st.form_submit_button("💾 Uložit změny v profilu", type="primary")
+            
+        if save_profile:
+            payload = {
+                "jmeno": curr_jmeno,
+                "prijmeni": curr_prijmeni,
+                "prezdivka": new_prezdivka if new_prezdivka else None
+            }
+            
+            success = self.db.update_user_profile(st.session_state.user_id, payload)
+            if success:
+                st.session_state["user_jmeno"] = f"{curr_jmeno} {curr_prijmeni}"
+                st.session_state["user_prezdivka"] = new_prezdivka
+                
+                if self.cookie_manager.get(cookie="firesport_user_login"):
+                    login_to_save = new_prezdivka if new_prezdivka else st.session_state.user_email
+                    self.cookie_manager.set("firesport_user_login", login_to_save, max_age=2592000)
+                    
+                st.success("✅ Profil byl úspěšně aktualizován!")
+                time.sleep(0.5)
+                st.rerun()
 
 
 # ==============================================================================
