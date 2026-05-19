@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
 import bcrypt
+import time
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from supabase import create_client, Client
+import extra_streamlit_components as stx
 
 # ==============================================================================
 # 1. DESIGN SYSTÉMU & CSS INJEKCE
@@ -43,7 +45,7 @@ class ThemeManager:
 
 
 # ==============================================================================
-# 2. DATOVÁ VRSTVA (OPRAVENÁ KOMUNIKACE)
+# 2. DATOVÁ VRSTVA
 # ==============================================================================
 class FireSportDB:
     def __init__(self):
@@ -70,7 +72,6 @@ class FireSportDB:
 
     def insert_sbor(self, nazev: str) -> Optional[int]:
         try:
-            # Vloží sbor a vrátí jeho vygenerované ID
             res = self.client.table("sbory").insert({"nazev_sdh": nazev.strip()}).execute()
             if res.data:
                 return res.data[0]["id"]
@@ -140,11 +141,12 @@ class FireSportDB:
 
 
 # ==============================================================================
-# 3. APLIKAČNÍ LOGIKA & REZIDENČNÍ PANELY
+# 3. APLIKAČNÍ LOGIKA & COOKIE SYSTÉM
 # ==============================================================================
 class FireSportApp:
     def __init__(self):
         self.db = FireSportDB()
+        self.cookie_manager = stx.CookieManager()
         self._init_session_state()
 
     def _init_session_state(self):
@@ -156,8 +158,36 @@ class FireSportApp:
             if k not in st.session_state:
                 st.session_state[k] = v
 
+    def handle_auto_login(self):
+        # Pokud už jsme přihlášeni v rámci aktuální session, nic neřešíme
+        if st.session_state["logged_in"]:
+            return
+
+        # Pokus o načtení emailu z cookies prohlížeče
+        saved_email = self.cookie_manager.get(cookie="firesport_user_email")
+        
+        if saved_email:
+            user = self.db.get_user_by_login(saved_email)
+            if user:
+                sbor_nazev = "Bez sboru"
+                if user.get("sbory"):
+                    if isinstance(user["sbory"], list) and len(user["sbory"]) > 0:
+                        sbor_nazev = user["sbory"][0].get("nazev_sdh", "Bez sboru")
+                    elif isinstance(user["sbory"], dict):
+                        sbor_nazev = user["sbory"].get("nazev_sdh", "Bez sboru")
+                
+                st.session_state.update({
+                    "logged_in": True, "user_id": user["id"],
+                    "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
+                    "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
+                })
+                st.rerun()
+
     def render(self):
         ThemeManager.apply_custom_theme()
+        
+        # Spuštění automatického přihlášení pomocí Cookies
+        self.handle_auto_login()
         
         if not st.session_state.logged_in:
             self.render_auth_zone()
@@ -174,33 +204,38 @@ class FireSportApp:
             with st.form("auth_login_form"):
                 login = st.text_input("E-mail (přihlašovací jméno)", placeholder="pavel.proud@sdh.cz").strip().lower()
                 heslo = st.text_input("Heslo", type="password", placeholder="••••••••")
+                submit_login = st.form_submit_button("Vstoupit do aplikace", type="primary", use_container_width=True)
                 
-                if st.form_submit_button("Vstoupit do aplikace", type="primary", use_container_width=True):
-                    if login and heslo:
-                        user = self.db.get_user_by_login(login)
-                        if user:
-                            if bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
-                                # Bezpečné parsování názvu sboru z relace
-                                sbor_nazev = "Bez sboru"
-                                if user.get("sbory"):
-                                    if isinstance(user["sbory"], list) and len(user["sbory"]) > 0:
-                                        sbor_nazev = user["sbory"][0].get("nazev_sdh", "Bez sboru")
-                                    elif isinstance(user["sbory"], dict):
-                                        sbor_nazev = user["sbory"].get("nazev_sdh", "Bez sboru")
-                                
-                                st.session_state.update({
-                                    "logged_in": True, "user_id": user["id"],
-                                    "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
-                                    "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
-                                })
-                                st.success("🔓 Přihlášení úspěšné! Vstupuji...")
-                                st.rerun()
-                            else:
-                                st.error("❌ Nesprávné heslo. Zkuste to znovu.")
+            if submit_login:
+                if login and heslo:
+                    user = self.db.get_user_by_login(login)
+                    if user:
+                        if bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
+                            sbor_nazev = "Bez sboru"
+                            if user.get("sbory"):
+                                if isinstance(user["sbory"], list) and len(user["sbory"]) > 0:
+                                    sbor_nazev = user["sbory"][0].get("nazev_sdh", "Bez sboru")
+                                elif isinstance(user["sbory"], dict):
+                                    sbor_nazev = user["sbory"].get("nazev_sdh", "Bez sboru")
+                            
+                            st.session_state.update({
+                                "logged_in": True, "user_id": user["id"],
+                                "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
+                                "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
+                            })
+                            
+                            # UKLÁDÁNÍ COOKIE: Zapamatuje si uživatele na 30 dní
+                            self.cookie_manager.set("firesport_user_email", login, max_age=2592000)
+                            
+                            st.success("🔓 Přihlášení úspěšné! Vstupuji...")
+                            time.sleep(0.5)
+                            st.rerun()
                         else:
-                            st.error("❌ Účet s tímto e-mailem neexistuje. Zaregistrujte se prosím.")
+                            st.error("❌ Nesprávné heslo. Zkuste to znovu.")
                     else:
-                        st.warning("⚠️ Vyplňte přihlašovací pole.")
+                        st.error("❌ Účet s tímto e-mailem neexistuje. Zaregistrujte se prosím.")
+                else:
+                    st.warning("⚠️ Vyplňte přihlašovací pole.")
 
         with tab_reg:
             with st.form("auth_reg_form"):
@@ -221,50 +256,45 @@ class FireSportApp:
                 prijmeni = cc2.text_input("Příjmení").strip()
                 email = st.text_input("E-mail (váš budoucí login)").strip().lower()
                 heslo_raw = st.text_input("Heslo do systému", type="password")
+                submit_reg = st.form_submit_button("Dokončit registraci a vytvořit účet", use_container_width=True)
 
-                if st.form_submit_button("Dokončit registraci a vytvořit účet", use_container_width=True):
-                    if email and heslo_raw and jmeno and prijmeni:
-                        
-                        # 1. Pokud zakládá nový sbor, nejdřív ho vytvoříme
-                        if typ_reg == "Vytvořit zcela nový sportovní klub/tým":
-                            if not novy_sbor:
-                                st.error("❌ Pro vytvoření nového týmu musíte vyplnit jeho název!")
-                                st.stop()
-                            sdh_id = self.db.insert_sbor(novy_sbor)
-                            sbor_final_nazev = novy_sbor
-                            if not sdh_id:
-                                st.stop() # Chyba už byla vypsána v metodě insert_sbor
-                        else:
-                            sbor_final_nazev = vybrany_sbor_nazev
-                        
-                        # 2. Zahashování hesla
-                        hashed = bcrypt.hashpw(heslo_raw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                        
-                        # 3. Sestavení payloadu a zápis uživatele
-                        reg_payload = {
-                            "sdh_id": sdh_id, 
-                            "jmeno": jmeno, 
-                            "prijmeni": prijmeni, 
-                            "email": email, 
-                            "heslo_hash": hashed, 
-                            "role": "správce"
-                        }
-                        
-                        created_user = self.db.register_user(reg_payload)
-                        
-                        # 4. AUTOMATICKÉ PŘIHLÁŠENÍ PO REGISTRACI
-                        if created_user:
-                            st.session_state.update({
-                                "logged_in": True, 
-                                "user_id": created_user["id"],
-                                "user_jmeno": f"{created_user['jmeno']} {created_user['prijmeni']}",
-                                "sdh_id": created_user["sdh_id"], 
-                                "sdh_nazev": sbor_final_nazev
-                            })
-                            st.success("🎉 Účet úspěšně vytvořen! Vstupuji automaticky do systému...")
-                            st.rerun()
+            if submit_reg:
+                if email and heslo_raw and jmeno and prijmeni:
+                    if typ_reg == "Vytvořit zcela nový sportovní klub/tým":
+                        if not novy_sbor:
+                            st.error("❌ Pro vytvoření nového týmu musíte vyplnit jeho název!")
+                            st.stop()
+                        sdh_id = self.db.insert_sbor(novy_sbor)
+                        sbor_final_nazev = novy_sbor
+                        if not sdh_id:
+                            st.stop()
                     else:
-                        st.warning("⚠️ Musíte vyplnit všechna pole (Jméno, Příjmení, E-mail a Heslo).")
+                        sbor_final_nazev = vybrany_sbor_nazev
+                    
+                    hashed = bcrypt.hashpw(heslo_raw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    
+                    reg_payload = {
+                        "sdh_id": sdh_id, "jmeno": jmeno, "prijmeni": prijmeni, 
+                        "email": email, "heslo_hash": hashed, "role": "správce"
+                    }
+                    
+                    created_user = self.db.register_user(reg_payload)
+                    
+                    if created_user:
+                        st.session_state.update({
+                            "logged_in": True, "user_id": created_user["id"],
+                            "user_jmeno": f"{created_user['jmeno']} {created_user['prijmeni']}",
+                            "sdh_id": created_user["sdh_id"], "sdh_nazev": sbor_final_nazev
+                        })
+                        
+                        # UKLÁDÁNÍ COOKIE: Zapamatuje si e-mail z registrace na 30 dní
+                        self.cookie_manager.set("firesport_user_email", email, max_age=2592000)
+                        
+                        st.success("🎉 Účet úspěšně vytvořen! Vstupuji do systému...")
+                        time.sleep(0.5)
+                        st.rerun()
+                else:
+                    st.warning("⚠️ Musíte vyplnit všechna pole.")
 
     def render_app_zone(self):
         with st.sidebar:
@@ -277,7 +307,10 @@ class FireSportApp:
             volba = st.sidebar.radio("Navigace sekcí:", menu, key="stranka")
             
             st.divider()
+            
+            # Tlačítko odhlásit nyní smaže i Cookie v prohlížeči
             if st.button("Odhlásit se z kabiny", use_container_width=True, type="secondary"):
+                self.cookie_manager.delete("firesport_user_email") # Smazání trvalého přihlášení
                 for k in ["logged_in", "user_id", "user_jmeno", "sdh_id", "sdh_nazev"]:
                     st.session_state[k] = None
                 st.session_state.logged_in = False
@@ -325,7 +358,6 @@ class FireSportApp:
             if pokusy:
                 df = pd.DataFrame(pokusy)
                 
-                # Bezpečné ošetření chybějících sloupců
                 for col in ["diskvalifikace", "vysledny_cas", "created_at", "cas_levy_proud", "cas_pravy_proud", "typ_udalosti", "nazev_souteze", "cas_voda", "poznamka"]:
                     if col not in df.columns: 
                         df[col] = False if col == "diskvalifikace" else 0.0 if "cas" in col or col == "vysledny_cas" else ""
@@ -367,8 +399,6 @@ class FireSportApp:
                 )
             else:
                 st.info("💡 Databáze pokusů vašeho sboru je prozatím prázdná.")
-        else:
-            st.warning("Nemáte přiřazený sbor. Údaje nelze načíst.")
 
     # ==============================================================================
     # POHLED 2: SOUPISKA & POSTY
@@ -376,10 +406,6 @@ class FireSportApp:
     def view_soupiska(self):
         st.header("🏃 Sestava týmu & Taktická tabule")
         
-        if not st.session_state.sdh_id:
-            st.warning("Uživatel není registrován k žádnému sboru.")
-            return
-
         zavodnici = self.db.get_soupiska(st.session_state.sdh_id)
         sestava = self.db.get_sestava()
         
@@ -413,8 +439,6 @@ class FireSportApp:
                     "Záložní varianta": s_info.get("zalozni_post", "—")
                 })
             st.dataframe(pd.DataFrame(sestava_data), use_container_width=True, hide_index=True)
-        else:
-            st.info("V databázi sboru se zatím nenachází jiní registrovaní běžci.")
 
     # ==============================================================================
     # POHLED 3: SPORTOVNÍ NÁŘADÍ
@@ -422,10 +446,6 @@ class FireSportApp:
     def view_naradi(self):
         st.header("⚡ Sklad sportovního materiálu & Speciály")
         
-        if not st.session_state.sdh_id:
-            st.warning("Chybí identifikátor sboru.")
-            return
-
         with st.expander("➕ INVENTARIZACE: PŘIDAT MATERIÁL", expanded=False):
             with st.form("material_form"):
                 n_nazev = st.text_input("Přesné označení nářadí", placeholder="Hadice C52 - Sport Slim")
@@ -446,7 +466,6 @@ class FireSportApp:
         material = self.db.get_material(st.session_state.sdh_id)
         if material:
             df_mat = pd.DataFrame(material)
-            
             for col in ["kategorie", "nazev", "parametry", "stav"]:
                 if col not in df_mat.columns: df_mat[col] = "—"
             
@@ -460,8 +479,6 @@ class FireSportApp:
                 },
                 use_container_width=True, hide_index=True
             )
-        else:
-            st.info("Sklad nářadí je prozatím prázdný.")
 
 
 # ==============================================================================
