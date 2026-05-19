@@ -20,7 +20,7 @@ class ThemeManager:
         
         st.markdown("""
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght=400;500;600;700;800&display=swap');
             html, body, [data-testid="stSidebar"] { font-family: 'Plus Jakarta Sans', sans-serif; }
             div[data-testid="stMetric"] {
                 background: linear-gradient(135deg, rgba(255,75,75,0.05) 0%, rgba(255,165,0,0.05) 100%);
@@ -43,7 +43,7 @@ class ThemeManager:
 
 
 # ==============================================================================
-# 2. DATOVÁ VRSTVA (Ošetření chyb a garance datových struktur)
+# 2. DATOVÁ VRSTVA (OPRAVENÁ KOMUNIKACE)
 # ==============================================================================
 class FireSportDB:
     def __init__(self):
@@ -55,39 +55,45 @@ class FireSportDB:
 
     def get_user_by_login(self, login: str) -> Optional[Dict[str, Any]]:
         try:
-            res = self.client.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{login},prezdivka.eq.{login}").execute()
+            res = self.client.table("uzivatele").select("*, sbory(nazev_sdh)").eq("email", login.strip().lower()).execute()
             return res.data[0] if res.data else None
         except Exception as e:
-            st.error(f"Chyba při autentizaci uživatele: {e}")
+            st.error(f"❌ Chyba při načítání profilu uživatele: {e}")
             return None
 
     def get_all_sbory(self) -> List[Dict[str, Any]]:
         try:
-            return self.client.table("sbory").select("*").execute().data or []
+            return self.client.table("sbory").select("*").order("nazev_sdh").execute().data or []
         except Exception as e:
             st.warning(f"Nepodařilo se načíst seznam sborů: {e}")
             return []
 
     def insert_sbor(self, nazev: str) -> Optional[int]:
         try:
-            res = self.client.table("sbory").insert({"nazev_sdh": nazev}).execute()
-            return res.data[0]["id"] if res.data else None
+            # Vloží sbor a vrátí jeho vygenerované ID
+            res = self.client.table("sbory").insert({"nazev_sdh": nazev.strip()}).execute()
+            if res.data:
+                return res.data[0]["id"]
+            return None
         except Exception as e:
-            st.error(f"Chyba při vytváření nového sboru: {e}")
+            st.error(f"❌ Nepodařilo se vytvořit nový klub v DB: {e}")
             return None
 
-    def register_user(self, u_data: Dict[str, Any]) -> Any:
+    def register_user(self, u_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            return self.client.table("uzivatele").insert(u_data).execute()
+            res = self.client.table("uzivatele").insert(u_data).execute()
+            if res.data:
+                return res.data[0]
+            return None
         except Exception as e:
-            st.error(f"Chyba při zápisu registrace uživatele: {e}")
+            st.error(f"❌ Zápis uživatele do databáze selhal: {e}")
             return None
 
     def get_pokusy(self, sdh_id: int) -> List[Dict[str, Any]]:
         try:
             return self.client.table("sportovni_pokusy").select("*").eq("sbor_id", sdh_id).order("created_at", desc=True).execute().data or []
         except Exception as e:
-            st.error(f"⚠️ Problém s tabulkou 'sportovni_pokusy' (Zkontroluj oprávnění/RLS). Detaily: {e}")
+            st.error(f"⚠️ Nepodařilo se načíst tréninkové pokusy: {e}")
             return []
 
     def insert_pokus(self, p_data: Dict[str, Any]) -> Any:
@@ -101,40 +107,40 @@ class FireSportDB:
         try:
             return self.client.table("uzivatele").select("id, jmeno, prijmeni").eq("sdh_id", sdh_id).execute().data or []
         except Exception as e:
-            st.error(f"⚠️ Problém s tabulkou 'uzivatele': {e}")
+            st.error(f"⚠️ Problém s načítáním členů soupisky: {e}")
             return []
 
     def get_sestava(self) -> List[Dict[str, Any]]:
         try:
             return self.client.table("sestava_tymu").select("*").execute().data or []
         except Exception as e:
-            st.error(f"⚠️ Problém s tabulkou 'sestava_tymu': {e}")
+            st.error(f"⚠️ Nepodařilo se načíst pozice taktické sestavy: {e}")
             return []
 
     def upsert_sestava(self, s_data: Dict[str, Any]) -> Any:
         try:
             return self.client.table("sestava_tymu").upsert(s_data, on_conflict="uzivatel_id").execute()
         except Exception as e:
-            st.error(f"🔴 Nepodařilo se aktualizovat taktickou sestavu: {e}")
+            st.error(f"🔴 Nepodařilo se uložit změnu pozice: {e}")
             return None
 
     def get_material(self, sdh_id: int) -> List[Dict[str, Any]]:
         try:
             return self.client.table("sportovni_material").select("*").eq("sdh_id", sdh_id).execute().data or []
         except Exception as e:
-            st.error(f"⚠️ Problém s tabulkou 'sportovni_material' (Zkontroluj oprávnění/RLS). Detaily: {e}")
+            st.error(f"⚠️ Nepodařilo se načíst sklad nářadí: {e}")
             return []
 
     def insert_material(self, m_data: Dict[str, Any]) -> Any:
         try:
             return self.client.table("sportovni_material").insert(m_data).execute()
         except Exception as e:
-            st.error(f"🔴 Nepodařilo se zaevidovat nářadí: {e}")
+            st.error(f"🔴 Nepodařilo se přidat nářadí do skladu: {e}")
             return None
 
 
 # ==============================================================================
-# 3. APLIKAČNÍ LOGIKA & RENDEROVÁNÍ STRÁNEK
+# 3. APLIKAČNÍ LOGIKA & REZIDENČNÍ PANELY
 # ==============================================================================
 class FireSportApp:
     def __init__(self):
@@ -152,6 +158,7 @@ class FireSportApp:
 
     def render(self):
         ThemeManager.apply_custom_theme()
+        
         if not st.session_state.logged_in:
             self.render_auth_zone()
         else:
@@ -165,22 +172,35 @@ class FireSportApp:
         
         with tab_login:
             with st.form("auth_login_form"):
-                login = st.text_input("E-mail nebo uživatelské jméno", placeholder="pavel.proud@sdh.cz").strip()
+                login = st.text_input("E-mail (přihlašovací jméno)", placeholder="pavel.proud@sdh.cz").strip().lower()
                 heslo = st.text_input("Heslo", type="password", placeholder="••••••••")
+                
                 if st.form_submit_button("Vstoupit do aplikace", type="primary", use_container_width=True):
-                    if user := self.db.get_user_by_login(login):
-                        if bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
-                            sbor_nazev = "Bez sboru"
-                            if user.get("sbory"):
-                                sbor_nazev = user["sbory"][0]["nazev_sdh"] if isinstance(user["sbory"], list) else user["sbory"].get("nazev_sdh", "Bez sboru")
-                            
-                            st.session_state.update({
-                                "logged_in": True, "user_id": user["id"],
-                                "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
-                                "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
-                            })
-                            st.rerun()
-                    st.error("🔒 Neplatné přihlašovací údaje. Zkuste to znovu.")
+                    if login and heslo:
+                        user = self.db.get_user_by_login(login)
+                        if user:
+                            if bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
+                                # Bezpečné parsování názvu sboru z relace
+                                sbor_nazev = "Bez sboru"
+                                if user.get("sbory"):
+                                    if isinstance(user["sbory"], list) and len(user["sbory"]) > 0:
+                                        sbor_nazev = user["sbory"][0].get("nazev_sdh", "Bez sboru")
+                                    elif isinstance(user["sbory"], dict):
+                                        sbor_nazev = user["sbory"].get("nazev_sdh", "Bez sboru")
+                                
+                                st.session_state.update({
+                                    "logged_in": True, "user_id": user["id"],
+                                    "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
+                                    "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
+                                })
+                                st.success("🔓 Přihlášení úspěšné! Vstupuji...")
+                                st.rerun()
+                            else:
+                                st.error("❌ Nesprávné heslo. Zkuste to znovu.")
+                        else:
+                            st.error("❌ Účet s tímto e-mailem neexistuje. Zaregistrujte se prosím.")
+                    else:
+                        st.warning("⚠️ Vyplňte přihlašovací pole.")
 
         with tab_reg:
             with st.form("auth_reg_form"):
@@ -188,32 +208,63 @@ class FireSportApp:
                 sbory = self.db.get_all_sbory()
                 sbor_dict = {s["nazev_sdh"]: s["id"] for s in sbory}
                 
-                sdh_id = None
                 if typ_reg == "Přidat se k existujícímu týmu" and sbor_dict:
-                    sdh_id = sbor_dict[st.selectbox("Vyberte tým:", list(sbor_dict.keys()))]
+                    vybrany_sbor_nazev = st.selectbox("Vyberte tým ze seznamu:", list(sbor_dict.keys()))
+                    sdh_id = sbor_dict[vybrany_sbor_nazev]
+                    novy_sbor = None
                 else:
                     novy_sbor = st.text_input("Název nového týmu (např. SDH Lhotka - muži)").strip()
+                    sdh_id = None
 
                 cc1, cc2 = st.columns(2)
-                jmeno = cc1.text_input("Jméno")
-                prijmeni = cc2.text_input("Příjmení")
-                email = st.text_input("E-mail (bude sloužit jako login)")
-                heslo_raw = st.text_input("Heslo", type="password")
+                jmeno = cc1.text_input("Jméno").strip()
+                prijmeni = cc2.text_input("Příjmení").strip()
+                email = st.text_input("E-mail (váš budoucí login)").strip().lower()
+                heslo_raw = st.text_input("Heslo do systému", type="password")
 
                 if st.form_submit_button("Dokončit registraci a vytvořit účet", use_container_width=True):
                     if email and heslo_raw and jmeno and prijmeni:
-                        try:
-                            if typ_reg == "Vytvořit zcela nový sportovní klub/tým" and novy_sbor:
-                                sdh_id = self.db.insert_sbor(novy_sbor)
-                            
-                            hashed = bcrypt.hashpw(heslo_raw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                            self.db.register_user({
-                                "sdh_id": sdh_id, "jmeno": jmeno, "prijmeni": prijmeni, 
-                                "email": email, "heslo_hash": hashed, "role": "správce"
+                        
+                        # 1. Pokud zakládá nový sbor, nejdřív ho vytvoříme
+                        if typ_reg == "Vytvořit zcela nový sportovní klub/tým":
+                            if not novy_sbor:
+                                st.error("❌ Pro vytvoření nového týmu musíte vyplnit jeho název!")
+                                st.stop()
+                            sdh_id = self.db.insert_sbor(novy_sbor)
+                            sbor_final_nazev = novy_sbor
+                            if not sdh_id:
+                                st.stop() # Chyba už byla vypsána v metodě insert_sbor
+                        else:
+                            sbor_final_nazev = vybrany_sbor_nazev
+                        
+                        # 2. Zahashování hesla
+                        hashed = bcrypt.hashpw(heslo_raw.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                        
+                        # 3. Sestavení payloadu a zápis uživatele
+                        reg_payload = {
+                            "sdh_id": sdh_id, 
+                            "jmeno": jmeno, 
+                            "prijmeni": prijmeni, 
+                            "email": email, 
+                            "heslo_hash": hashed, 
+                            "role": "správce"
+                        }
+                        
+                        created_user = self.db.register_user(reg_payload)
+                        
+                        # 4. AUTOMATICKÉ PŘIHLÁŠENÍ PO REGISTRACI
+                        if created_user:
+                            st.session_state.update({
+                                "logged_in": True, 
+                                "user_id": created_user["id"],
+                                "user_jmeno": f"{created_user['jmeno']} {created_user['prijmeni']}",
+                                "sdh_id": created_user["sdh_id"], 
+                                "sdh_nazev": sbor_final_nazev
                             })
-                            st.success("🎉 Registrace dokončena! Nyní se můžete přihlásit.")
-                        except Exception as e:
-                            st.error(f"Chyba při zápisu registrace: {e}")
+                            st.success("🎉 Účet úspěšně vytvořen! Vstupuji automaticky do systému...")
+                            st.rerun()
+                    else:
+                        st.warning("⚠️ Musíte vyplnit všechna pole (Jméno, Příjmení, E-mail a Heslo).")
 
     def render_app_zone(self):
         with st.sidebar:
@@ -240,7 +291,7 @@ class FireSportApp:
             self.view_naradi()
 
     # ==============================================================================
-    # POHLED 1: VÝSLEDKY & TRÉNINKY (Ošetřeny chybějící DataFrame sloupce)
+    # POHLED 1: VÝSLEDKY & TRÉNINKY
     # ==============================================================================
     def view_vysledky(self):
         st.header("🏆 Tréninkový deník & Telemetrie útoků")
@@ -269,51 +320,55 @@ class FireSportApp:
                     st.success("🎯 Data úspěšně odeslána.")
                     st.rerun()
 
-        pokusy = self.db.get_pokusy(st.session_state.sdh_id)
-        if pokusy:
-            df = pd.DataFrame(pokusy)
-            
-            # Bezpečné vytvoření chybějících sloupců pro hladký běh UI
-            for col in ["diskvalifikace", "vysledny_cas", "created_at", "cas_levy_proud", "cas_pravy_proud", "typ_udalosti", "nazev_souteze", "cas_voda", "poznamka"]:
-                if col not in df.columns: df[col] = False if col == "diskvalifikace" else 0.0 if "cas" in col or col == "vysledny_cas" else ""
+        if st.session_state.sdh_id:
+            pokusy = self.db.get_pokusy(st.session_state.sdh_id)
+            if pokusy:
+                df = pd.DataFrame(pokusy)
+                
+                # Bezpečné ošetření chybějících sloupců
+                for col in ["diskvalifikace", "vysledny_cas", "created_at", "cas_levy_proud", "cas_pravy_proud", "typ_udalosti", "nazev_souteze", "cas_voda", "poznamka"]:
+                    if col not in df.columns: 
+                        df[col] = False if col == "diskvalifikace" else 0.0 if "cas" in col or col == "vysledny_cas" else ""
 
-            platne = df[df["diskvalifikace"] == False]
-            
-            m1, m2, m3 = st.columns(3)
-            if not platne.empty:
-                m1.metric("🏆 Rekord sezóny (Tým)", f"{platne['vysledny_cas'].min():.2f} s")
-                m2.metric("⏱️ Průměrný čas útoku", f"{platne['vysledny_cas'].mean():.2f} s")
+                platne = df[df["diskvalifikace"] == False]
+                
+                m1, m2, m3 = st.columns(3)
+                if not platne.empty:
+                    m1.metric("🏆 Rekord sezóny (Tým)", f"{float(platne['vysledny_cas'].min()):.2f} s")
+                    m2.metric("⏱️ Průměrný čas útoku", f"{float(platne['vysledny_cas'].mean()):.2f} s")
+                else:
+                    m1.metric("🏆 Rekord sezóny (Tým)", "N/A")
+                    m2.metric("⏱️ Průměrný čas útoku", "N/A")
+                m3.metric("🏃 Celkem pokusů", len(df))
+                
+                st.write("### 📊 Detailní telemetrie pokusů")
+                
+                df["datum"] = pd.to_datetime(df["created_at"], errors="coerce").dt.date
+                df["prostrik"] = (df["cas_levy_proud"].astype(float) - df["cas_pravy_proud"].astype(float)).abs()
+                df["status"] = df["diskvalifikace"].map({True: "❌ Neplatný (NP)", False: "✅ Platný pokus"})
+                
+                ui_df = df[["datum", "typ_udalosti", "nazev_souteze", "cas_voda", "cas_levy_proud", "cas_pravy_proud", "prostrik", "vysledny_cas", "status", "poznamka"]]
+                
+                st.dataframe(
+                    ui_df,
+                    column_config={
+                        "datum": st.column_config.DateColumn("Datum"),
+                        "typ_udalosti": st.column_config.TextColumn("Kategorie"),
+                        "nazev_souteze": st.column_config.TextColumn("Místo konání"),
+                        "cas_voda": st.column_config.NumberColumn("Koš/Voda", format="%.2f s"),
+                        "cas_levy_proud": st.column_config.NumberColumn("Levý proud", format="%.2f s"),
+                        "cas_pravy_proud": st.column_config.NumberColumn("Pravý proud", format="%.2f s"),
+                        "prostrik": st.column_config.NumberColumn("Prostřik", format="%.2f s"),
+                        "vysledny_cas": st.column_config.NumberColumn("VÝSLEDNÝ ČAS", format="%.2f s"),
+                        "status": st.column_config.TextColumn("Stav pokusu"),
+                        "poznamka": st.column_config.TextColumn("Komentář analýzy")
+                    },
+                    hide_index=True, use_container_width=True
+                )
             else:
-                m1.metric("🏆 Rekord sezóny (Tým)", "N/A")
-                m2.metric("⏱️ Průměrný čas útoku", "N/A")
-            m3.metric("🏃 Celkem pokusů", len(df))
-            
-            st.write("### 📊 Detailní telemetrie pokusů")
-            
-            df["datum"] = pd.to_datetime(df["created_at"], errors="coerce").dt.date
-            df["prostrik"] = (df["cas_levy_proud"] - df["cas_pravy_proud"]).abs()
-            df["status"] = df["diskvalifikace"].map({True: "❌ Neplatný (NP)", False: "✅ Platný pokus"})
-            
-            ui_df = df[["datum", "typ_udalosti", "nazev_souteze", "cas_voda", "cas_levy_proud", "cas_pravy_proud", "prostrik", "vysledny_cas", "status", "poznamka"]]
-            
-            st.dataframe(
-                ui_df,
-                column_config={
-                    "datum": st.column_config.DateColumn("Datum"),
-                    "typ_udalosti": st.column_config.TextColumn("Kategorie"),
-                    "nazev_souteze": st.column_config.TextColumn("Místo konání"),
-                    "cas_voda": st.column_config.NumberColumn("Koš/Voda", format="%.2f s"),
-                    "cas_levy_proud": st.column_config.NumberColumn("Levý proud", format="%.2f s"),
-                    "cas_pravy_proud": st.column_config.NumberColumn("Pravý proud", format="%.2f s"),
-                    "prostrik": st.column_config.NumberColumn("Prostřik", format="%.2f s"),
-                    "vysledny_cas": st.column_config.NumberColumn("VÝSLEDNÝ ČAS", format="%.2f s"),
-                    "status": st.column_config.TextColumn("Stav pokusu"),
-                    "poznamka": st.column_config.TextColumn("Komentář analýzy")
-                },
-                hide_index=True, use_container_width=True
-            )
+                st.info("💡 Databáze pokusů vašeho sboru je prozatím prázdná.")
         else:
-            st.info("💡 Databáze pokusů je prozatím prázdná.")
+            st.warning("Nemáte přiřazený sbor. Údaje nelze načíst.")
 
     # ==============================================================================
     # POHLED 2: SOUPISKA & POSTY
@@ -321,6 +376,10 @@ class FireSportApp:
     def view_soupiska(self):
         st.header("🏃 Sestava týmu & Taktická tabule")
         
+        if not st.session_state.sdh_id:
+            st.warning("Uživatel není registrován k žádnému sboru.")
+            return
+
         zavodnici = self.db.get_soupiska(st.session_state.sdh_id)
         sestava = self.db.get_sestava()
         
@@ -355,7 +414,7 @@ class FireSportApp:
                 })
             st.dataframe(pd.DataFrame(sestava_data), use_container_width=True, hide_index=True)
         else:
-            st.warning("V databázi sboru se nenachází žádní registrovaní běžci.")
+            st.info("V databázi sboru se zatím nenachází jiní registrovaní běžci.")
 
     # ==============================================================================
     # POHLED 3: SPORTOVNÍ NÁŘADÍ
@@ -363,6 +422,10 @@ class FireSportApp:
     def view_naradi(self):
         st.header("⚡ Sklad sportovního materiálu & Speciály")
         
+        if not st.session_state.sdh_id:
+            st.warning("Chybí identifikátor sboru.")
+            return
+
         with st.expander("➕ INVENTARIZACE: PŘIDAT MATERIÁL", expanded=False):
             with st.form("material_form"):
                 n_nazev = st.text_input("Přesné označení nářadí", placeholder="Hadice C52 - Sport Slim")
@@ -384,7 +447,6 @@ class FireSportApp:
         if material:
             df_mat = pd.DataFrame(material)
             
-            # Bezpečnostní ošetření sloupců materiálu
             for col in ["kategorie", "nazev", "parametry", "stav"]:
                 if col not in df_mat.columns: df_mat[col] = "—"
             
