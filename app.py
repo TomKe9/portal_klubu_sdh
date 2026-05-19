@@ -55,10 +55,11 @@ class FireSportDB:
 
     def get_user_by_login(self, login: str) -> Optional[Dict[str, Any]]:
         try:
-            res = self.client.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{login},prezdivka.eq.{login}").execute()
+            # Hledáme primárně přes e-mail (vyčištěný na lowercase bez mezer)
+            res = self.client.table("uzivatele").select("*, sbory(nazev_sdh)").eq("email", login.strip().lower()).execute()
             return res.data[0] if res.data else None
         except Exception as e:
-            st.error(f"Chyba při autentizaci uživatele: {e}")
+            st.error(f"Chyba při komunikaci s DB během přihlašování: {e}")
             return None
 
     def get_all_sbory(self) -> List[Dict[str, Any]]:
@@ -87,7 +88,7 @@ class FireSportDB:
         try:
             return self.client.table("sportovni_pokusy").select("*").eq("sbor_id", sdh_id).order("created_at", desc=True).execute().data or []
         except Exception as e:
-            st.error(f"⚠️ Problém s tabulkou 'sportovni_pokusy' (Zkontroluj oprávnění/RLS). Detaily: {e}")
+            st.error(f"⚠️ Problém s tabulkou 'sportovni_pokusy'. Detaily: {e}")
             return []
 
     def insert_pokus(self, p_data: Dict[str, Any]) -> Any:
@@ -122,7 +123,7 @@ class FireSportDB:
         try:
             return self.client.table("sportovni_material").select("*").eq("sdh_id", sdh_id).execute().data or []
         except Exception as e:
-            st.error(f"⚠️ Problém s tabulkou 'sportovni_material' (Zkontroluj oprávnění/RLS). Detaily: {e}")
+            st.error(f"⚠️ Problém s tabulkou 'sportovni_material'. Detaily: {e}")
             return []
 
     def insert_material(self, m_data: Dict[str, Any]) -> Any:
@@ -165,22 +166,28 @@ class FireSportApp:
         
         with tab_login:
             with st.form("auth_login_form"):
-                login = st.text_input("E-mail nebo uživatelské jméno", placeholder="pavel.proud@sdh.cz").strip()
+                login = st.text_input("E-mail (přihlašovací jméno)", placeholder="pavel.proud@sdh.cz").strip().lower()
                 heslo = st.text_input("Heslo", type="password", placeholder="••••••••")
+                
                 if st.form_submit_button("Vstoupit do aplikace", type="primary", use_container_width=True):
-                    if user := self.db.get_user_by_login(login):
-                        if bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
+                    if login and heslo:
+                        user = self.db.get_user_by_login(login)
+                        if user and bcrypt.checkpw(heslo.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
                             sbor_nazev = "Bez sboru"
                             if user.get("sbory"):
-                                sbor_nazev = user["sbory"][0]["nazev_sdh"] if isinstance(user["sbory"], list) else user["sbory"].get("nazev_sdh", "Bez sboru")
+                                if isinstance(user["sbory"], list) and len(user["sbory"]) > 0:
+                                    sbor_nazev = user["sbory"][0].get("nazev_sdh", "Bez sboru")
+                                elif isinstance(user["sbory"], dict):
+                                    sbor_nazev = user["sbory"].get("nazev_sdh", "Bez sboru")
                             
                             st.session_state.update({
                                 "logged_in": True, "user_id": user["id"],
                                 "user_jmeno": f"{user['jmeno']} {user['prijmeni']}",
                                 "sdh_id": user["sdh_id"], "sdh_nazev": sbor_nazev
                             })
+                            st.success("🔓 Přihlášení úspěšné! Vstupuji do šatny...")
                             st.rerun()
-                    st.error("🔒 Neplatné přihlašovací údaje. Zkuste to znovu.")
+                    st.error("🔒 Neplatné přihlašovací údaje nebo uživatel neexistuje. Zkuste to znovu přes Registraci.")
 
         with tab_reg:
             with st.form("auth_reg_form"):
@@ -195,9 +202,9 @@ class FireSportApp:
                     novy_sbor = st.text_input("Název nového týmu (např. SDH Lhotka - muži)").strip()
 
                 cc1, cc2 = st.columns(2)
-                jmeno = cc1.text_input("Jméno")
-                prijmeni = cc2.text_input("Příjmení")
-                email = st.text_input("E-mail (bude sloužit jako login)")
+                jmeno = cc1.text_input("Jméno").strip()
+                prijmeni = cc2.text_input("Příjmení").strip()
+                email = st.text_input("E-mail (bude sloužit jako login)").strip().lower()
                 heslo_raw = st.text_input("Heslo", type="password")
 
                 if st.form_submit_button("Dokončit registraci a vytvořit účet", use_container_width=True):
@@ -211,9 +218,11 @@ class FireSportApp:
                                 "sdh_id": sdh_id, "jmeno": jmeno, "prijmeni": prijmeni, 
                                 "email": email, "heslo_hash": hashed, "role": "správce"
                             })
-                            st.success("🎉 Registrace dokončena! Nyní se můžete přihlásit.")
+                            st.success("🎉 Registrace dokončena! Nyní se můžete vlevo přepnout na Přihlášení.")
                         except Exception as e:
                             st.error(f"Chyba při zápisu registrace: {e}")
+                    else:
+                        st.warning("⚠️ Vyplňte prosím všechna povinná pole (Jméno, Příjmení, E-mail, Heslo).")
 
     def render_app_zone(self):
         with st.sidebar:
@@ -240,7 +249,7 @@ class FireSportApp:
             self.view_naradi()
 
     # ==============================================================================
-    # POHLED 1: VÝSLEDKY & TRÉNINKY (Ošetřeny chybějící DataFrame sloupce)
+    # POHLED 1: VÝSLEDKY & TRÉNINKY
     # ==============================================================================
     def view_vysledky(self):
         st.header("🏆 Tréninkový deník & Telemetrie útoků")
@@ -273,7 +282,6 @@ class FireSportApp:
         if pokusy:
             df = pd.DataFrame(pokusy)
             
-            # Bezpečné vytvoření chybějících sloupců pro hladký běh UI
             for col in ["diskvalifikace", "vysledny_cas", "created_at", "cas_levy_proud", "cas_pravy_proud", "typ_udalosti", "nazev_souteze", "cas_voda", "poznamka"]:
                 if col not in df.columns: df[col] = False if col == "diskvalifikace" else 0.0 if "cas" in col or col == "vysledny_cas" else ""
 
@@ -384,7 +392,6 @@ class FireSportApp:
         if material:
             df_mat = pd.DataFrame(material)
             
-            # Bezpečnostní ošetření sloupců materiálu
             for col in ["kategorie", "nazev", "parametry", "stav"]:
                 if col not in df_mat.columns: df_mat[col] = "—"
             
