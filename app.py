@@ -48,7 +48,7 @@ class ThemeManager:
 
 
 # ==============================================================================
-# 2. DATOVÁ VRSTVA
+# 2. DATOVÁ VRSTVA (OPRAVENÁ PRO TOLERANCI VELKÝCH/MALÝCH PÍSMEN)
 # ==============================================================================
 class FireSportDB:
     def __init__(self):
@@ -61,7 +61,14 @@ class FireSportDB:
     def get_user_by_login(self, login: str) -> Optional[Dict[str, Any]]:
         try:
             clean_login = login.strip().lower()
-            res = self.client.table("uzivatele").select("*, sbory(nazev_sdh)").or_(f"email.eq.{clean_login},prezdivka.eq.{clean_login}").execute()
+            if not clean_login:
+                return None
+                
+            # OPRAVA: Používáme .ilike. místo .eq. aby vyhledávání ignorovalo velká/malá písmena
+            res = self.client.table("uzivatele")\
+                .select("*, sbory(nazev_sdh)")\
+                .or_(f"email.ilike.{clean_login},prezdivka.ilike.{clean_login}")\
+                .execute()
             return res.data[0] if res.data else None
         except Exception as e:
             st.error(f"❌ Chyba při načítání profilu uživatele: {e}")
@@ -145,7 +152,6 @@ class FireSportDB:
 
     def get_kalendar(self, sdh_id: int) -> List[Dict[str, Any]]:
         try:
-            # Načte akce od dnešního data dál, seřazené chronologicky
             dnes = datetime.now().date().isoformat()
             return self.client.table("kalendar_akci").select("*").eq("sbor_id", sdh_id).gte("datum", dnes).order("datum").order("cas").execute().data or []
         except Exception as e:
@@ -221,7 +227,7 @@ class FireSportApp:
         
         with tab_login:
             with st.form("auth_login_form"):
-                login = st.text_input("E-mail nebo Přezdívka", placeholder="pavel.proud / pavel@sdh.cz").strip().lower()
+                login = st.text_input("E-mail nebo Přezdívka", placeholder="pavel.proud / pavel@sdh.cz").strip()
                 heslo = st.text_input("Heslo", type="password", placeholder="••••••••")
                 remember_me = st.checkbox("Zůstat přihlášený (na 30 dní)", value=True)
                 submit_login = st.form_submit_button("Vstoupit do aplikace", type="primary", use_container_width=True)
@@ -369,7 +375,6 @@ class FireSportApp:
             akce = self.db.get_kalendar(st.session_state.sdh_id)
             if akce:
                 for a in akce:
-                    # Formátování zobrazení data a času
                     try:
                         datum_raw = datetime.strptime(a["datum"], "%Y-%m-%d").strftime("%d. %m. %Y")
                     except:
