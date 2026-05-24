@@ -251,7 +251,7 @@ if st.session_state["logged_in"]:
                             if db.delete_akce(op["id"]):
                                 st.rerun()
                 else:
-                    st.caption("Žádné pravidelné události.")
+                    st.caption("Žždné pravidelné události.")
             
             with col_list_jedn:
                 st.markdown("#### Jednorázové události a závody")
@@ -357,4 +357,4 @@ else:
                     "heslo_hash": hashed
                 }
                 if db.register_user(payload):
-                    st.success(f"Registrace sboru {reg_sdh} byla úspěšně dokončena. Pokračujte přihlášením.")
+                    st.success(f"Registrace sboru byla úspěšně dokončena. Pokračujte přihlášením.")
