@@ -12,7 +12,7 @@ st.set_page_config(page_title="FireSport Pro | Správa", layout="wide")
 # ==============================================================================
 class FireSportDB:
     def __init__(self):
-        self.client: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+        self.client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
     def get_user_by_login(self, login: str):
         res = self.client.table("uzivatele").select("*").or_(f"email.ilike.{login.strip().lower()},prezdivka.ilike.{login.strip().lower()}").execute()
@@ -22,7 +22,7 @@ class FireSportDB:
         data = self.client.table("akce").select("*").eq("sdh", sdh).execute().data or []
         if data:
             df = pd.DataFrame(data)
-            # Zajištění existence sloupců v paměti (pro zobrazení)
+            # Ošetření: Pokud v DB sloupce chybí, vytvoříme je v paměti
             for col in ['cas_levy', 'cas_pravy', 'umisteni']:
                 if col not in df.columns: df[col] = ""
             df['dt'] = pd.to_datetime(df['datum_jednorazove'] + ' ' + df['cas'])
@@ -30,22 +30,14 @@ class FireSportDB:
         return []
 
     def insert_akce(self, data): return self.client.table("akce").insert(data).execute()
-    
-    def update_akce_vysledky(self, id, data):
-        # Diagnostický blok: Pokud se zápis nepovede, vypíše chybu
-        try:
-            return self.client.table("akce").update(data).eq("id", id).execute()
-        except Exception as e:
-            st.error(f"Databáze odmítla zápis: {e}. Zkontroluj Policies v Supabase (Authentication -> Policies)!")
-            return None
-
+    def update_akce_vysledky(self, id, data): return self.client.table("akce").update(data).eq("id", id).execute()
     def delete_akce(self, id): return self.client.table("akce").delete().eq("id", id).execute()
 
 db = FireSportDB()
 if "logged_in" not in st.session_state: st.session_state.update({"logged_in": False})
 
 # ==============================================================================
-# APLIKACE
+# HLAVNÍ APLIKACE
 # ==============================================================================
 if not st.session_state["logged_in"]:
     st.title("🔐 Přihlášení do FireSport Pro")
@@ -90,6 +82,7 @@ else:
         df_edit = df[['id', 'nazev', 'misto', 'datum_jednorazove', 'cas_levy', 'cas_pravy', 'umisteni']]
         df_edit.columns = ["ID", "Název", "Místo", "Datum", "Čas Levý", "Čas Pravý", "Umístění"]
         
+        # Interaktivní editor
         edited_df = st.data_editor(df_edit, hide_index=True, column_config={"ID": None})
         
         if st.button("Uložit změny v závodech"):
