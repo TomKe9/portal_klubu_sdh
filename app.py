@@ -5,6 +5,7 @@ from datetime import datetime
 from supabase import create_client, Client
 import extra_streamlit_components as stx
 
+# Konfigurace stránky
 st.set_page_config(page_title="FireSport Pro | Správa", layout="wide")
 
 # ==============================================================================
@@ -12,7 +13,7 @@ st.set_page_config(page_title="FireSport Pro | Správa", layout="wide")
 # ==============================================================================
 class FireSportDB:
     def __init__(self):
-        self.client: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+        self.client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
     def get_user_by_login(self, login: str):
         res = self.client.table("uzivatele").select("*").or_(f"email.ilike.{login.strip().lower()},prezdivka.ilike.{login.strip().lower()}").execute()
@@ -22,6 +23,7 @@ class FireSportDB:
         data = self.client.table("akce").select("*").eq("sdh", sdh).execute().data or []
         if data:
             df = pd.DataFrame(data)
+            # Převod na datetime pro automatické seřazení
             df['dt'] = pd.to_datetime(df['datum_jednorazove'] + ' ' + df['cas'])
             return df.sort_values('dt').drop(columns=['dt']).to_dict('records')
         return []
@@ -50,7 +52,7 @@ else:
     st.sidebar.title(f"Sbor: {st.session_state['user_sdh']}")
     if st.sidebar.button("Odhlásit se"): st.session_state.clear(); st.rerun()
 
-    # FORMULÁŘ
+    # FORMULÁŘ PRO NOVOU AKCI
     with st.expander("➕ Přidat novou akci"):
         with st.form("nova_akce"):
             c1, c2, c3 = st.columns(3)
@@ -61,44 +63,50 @@ else:
             cas = st.time_input("Čas")
             opak = st.checkbox("Opakovat každý týden (jen trénink)") if typ == "Trénink" else False
             if st.form_submit_button("Uložit"):
-                db.insert_akce({"sdh": st.session_state["user_sdh"], "typ_akce": typ, "nazev": nazev, "misto": misto, "datum_jednorazove": datum.isoformat(), "cas": cas.strftime("%H:%M"), "is_opakována": opak})
+                db.insert_akce({
+                    "sdh": st.session_state["user_sdh"], "typ_akce": typ, "nazev": nazev, 
+                    "misto": misto, "datum_jednorazove": datum.isoformat(), 
+                    "cas": cas.strftime("%H:%M"), "is_opakována": opak,
+                    "cas_levy": "", "cas_pravy": "", "umisteni": "" 
+                })
                 st.rerun()
 
     akce_list = db.get_akce_pro_sdh(st.session_state["user_sdh"])
 
-    # TABULKA ZÁVODŮ (EDITOVATELNÁ S OPRAVOU)
+    # TABULKA ZÁVODŮ
     st.subheader("🗓 Přehled závodů a výsledky")
     zavody = [a for a in akce_list if a["typ_akce"] == "Závod"]
     if zavody:
         df = pd.DataFrame(zavody)
-        
-        # OŠETŘENÍ CHYBĚJÍCÍCH SLOUPCŮ
-        for col in ['cas_levy', 'cas_pravy', 'umisteni']:
-            if col not in df.columns:
-                df[col] = ""
-        
+        # Příprava dat pro editor
         df_edit = df[['id', 'nazev', 'misto', 'datum_jednorazove', 'cas_levy', 'cas_pravy', 'umisteni']]
         df_edit.columns = ["ID", "Název", "Místo", "Datum", "Čas Levý", "Čas Pravý", "Umístění"]
         
-        # Interaktivní editor
+        # Interaktivní tabulka
         edited_df = st.data_editor(df_edit, hide_index=True, column_config={"ID": None})
         
         if st.button("Uložit změny v závodech"):
             for _, row in edited_df.iterrows():
-                db.update_akce(row["ID"], {"cas_levy": row["Čas Levý"], "cas_pravy": row["Čas Pravý"], "umisteni": row["Umístění"]})
+                db.update_akce(row["ID"], {
+                    "cas_levy": str(row["Čas Levý"]), 
+                    "cas_pravy": str(row["Čas Pravý"]), 
+                    "umisteni": str(row["Umístění"])
+                })
             st.success("Změny uloženy!")
             st.rerun()
             
+        # Smazání
         vyber_smazat = st.selectbox("Vyberte závod ke smazání:", options=df["id"].tolist(), format_func=lambda x: df[df["id"]==x]["nazev"].values[0])
         if st.button("Smazat vybraný závod"):
             db.delete_akce(vyber_smazat); st.rerun()
     else:
-        st.info("Žádné závody.")
+        st.info("Žádné závody nejsou naplánovány.")
 
     # TRÉNINKY
     st.subheader("🏋️ Tréninky")
     for t in [a for a in akce_list if a["typ_akce"] == "Trénink"]:
         with st.container(border=True):
             c1, c2 = st.columns([4, 1])
-            c1.write(f"**{t['nazev']}** | {t['datum_jednorazove']} | 📍 {t.get('misto', '-')}")
+            op = "(Každý týden)" if t.get("is_opakována") else ""
+            c1.write(f"**{t['nazev']}** | {t['datum_jednorazove']} v {t['cas']} | 📍 {t.get('misto', '-')} {op}")
             if c2.button("Smazat", key=f"t_{t['id']}"): db.delete_akce(t['id']); st.rerun()
