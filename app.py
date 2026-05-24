@@ -1,10 +1,11 @@
 import streamlit as st
 import bcrypt
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, Any, List, Optional
 from supabase import create_client, Client
 import extra_streamlit_components as stx
+from streamlit_calendar import calendar
 
 # Nastavení konfigurace stránky
 st.set_page_config(page_title="🔥 FireSport Pro | Kalendář", page_icon="⚡", layout="wide")
@@ -59,7 +60,7 @@ class FireSportDB:
 
     def get_vsechny_akce(self) -> List[Dict[str, Any]]:
         try:
-            res = self.client.table("akce").select("*").order("created_at", desc=True).execute()
+            res = self.client.table("akce").select("*").execute()
             return res.data or []
         except Exception as e:
             st.error(f"❌ Nepodařilo se načíst akce z DB: {e}")
@@ -72,6 +73,42 @@ class FireSportDB:
         except Exception as e:
             st.error(f"❌ Nepodařilo se smazat akci z databáze: {e}")
             return False
+
+# ==============================================================================
+# POMOCNÉ FUNKCE PRO KALENDÁŘ A ŘAZENÍ
+# ==============================================================================
+def vygeneruj_kalendarove_udalosti(akce_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Převede akce z DB na formát událostí, kterým rozumí vizuální kalendář."""
+    udalosti = []
+    dnes = date.today()
+    
+    for akce in akce_list:
+        barva = "#ff4b4b" if akce["typ_akce"] == "Závod" else "#00c0f2"
+        ikona = "🔥" if akce["typ_akce"] == "Závod" else "🏃‍♂️"
+        
+        if akce["is_opakována"]:
+            # Pro opakované akce vygenerujeme záznamy na 4 týdny dopředu, aby byly v kalendáři vidět
+            target_den = akce["opakování_den_v_tydnu"]
+            for i in range(-7, 28): # Zobrazíme i 1 týden zpět a 4 týdny dopředu
+                den_kontroly = dnes + timedelta(days=i)
+                if den_kontroly.weekday() == target_den:
+                    udalosti.append({
+                        "title": f"{ikona} {akce['nazev']}",
+                        "start": f"{den_kontroly.isoformat()}T{akce['cas'][:5]}",
+                        "backgroundColor": barva,
+                        "borderColor": barva,
+                        "allDay": False
+                    })
+        else:
+            if akce["datum_jednorazove"]:
+                udalosti.append({
+                    "title": f"{ikona} {akce['nazev']}",
+                    "start": f"{akce['datum_jednorazove']}T{akce['cas'][:5]}",
+                    "backgroundColor": barva,
+                    "borderColor": barva,
+                    "allDay": False
+                })
+    return udalosti
 
 # ==============================================================================
 # APLIKAČNÍ LOGIKA & AUTOMATICKÉ PŘIHLÁŠENÍ
@@ -113,19 +150,17 @@ if st.session_state["logged_in"]:
             st.session_state["user_id"] = None
             st.rerun()
 
-    # --- MAIN OBSAH: SEKCE KALENDÁŘ ---
     if volba == "📅 Kalendář & Plánování":
         st.title("📅 Kalendář akcí & Tréninkový plán")
         
-        col_form, col_list = st.columns([1, 2])
+        col_form, col_cal = st.columns([1, 2])
         
         with col_form:
             st.subheader("➕ Přidat novou událost")
-            
             with st.form("nova_akce_form", clear_on_submit=True):
                 typ_akce = st.selectbox("Typ události", ["Trénink", "Závod"])
                 nazev_akce = st.text_input("Název akce", placeholder="Např. Příprava na základně / Extraliga")
-                # Nastaví jako výchozí čas dnešní den, ale přesně v 18:00
+                
                 vychozi_cas = datetime.combine(date.today(), datetime.min.time()).replace(hour=18, minute=0).time()
                 cas_akce = st.time_input("Čas začátku", value=vychozi_cas)
                 misto_akce = st.text_input("Místo", placeholder="Hasičské hřiště / Obec")
@@ -146,9 +181,7 @@ if st.session_state["logged_in"]:
                 if not nazev_akce:
                     st.error("❌ Vyplňte prosím název akce.")
                 else:
-                    # Ukládáme čas jako čistý textový formát HH:MM bez sekund a časových pásem
                     formatovany_cas = cas_akce.strftime("%H:%M")
-                    
                     payload_akce = {
                         "vytvoril_uzivatel_id": st.session_state["user_id"],
                         "typ_akce": typ_akce,
@@ -165,34 +198,57 @@ if st.session_state["logged_in"]:
                         time.sleep(0.5)
                         st.rerun()
 
-        with col_list:
-            st.subheader("📋 Přehled naplánovaných akcí")
-            akce_list = db.get_vsechny_akce()
+        with col_cal:
+            st.subheader("🗓️ Vizuální přehled")
+            raw_akce = db.get_vsechny_akce()
+            udalosti_pro_kalendar = vygeneruj_kalendarove_udalosti(raw_akce)
             
-            if not akce_list:
-                st.info("Zatím nejsou naplánované žádné akce ani pravidelné tréninky.")
-            else:
-                st.markdown("#### 🔄 Pravidelné týdenní tréninky / akce")
-                opakovane = [a for a in akce_list if a["is_opakována"]]
+            # Nastavení vzhledu a chování kalendáře (Začátek pondělím, Čeština, kompaktní výška)
+            kalendar_options = {
+                "initialView": "dayGridMonth",
+                "firstDay": 1, 
+                "locale": "cs",
+                "headerToolbar": {
+                    "left": "prev,next today",
+                    "center": "title",
+                    "right": "dayGridMonth,timeGridWeek"
+                },
+                "height": 450
+            }
+            
+            calendar(events=udalosti_pro_kalendar, options=kalendar_options)
+
+        # Seznam akcí pod kalendářem uspořádaný podle data
+        st.write("---")
+        st.subheader("📋 Kompletní seznam akcí a správa")
+        
+        if not raw_akce:
+            st.info("Zatím nejsou naplánované žádné akce.")
+        else:
+            col_list_op, col_list_jedn = st.columns(2)
+            
+            with col_list_op:
+                st.markdown("#### 🔄 Pravidelné týdenní tréninky")
+                opakovane = [a for a in raw_akce if a["is_opakována"]]
+                # Seřadíme opakované podle dne v týdnu (Pondělí až Neděle)
+                opakovane.sort(key=lambda x: x["opakování_den_v_tydnu"])
                 
                 if opakovane:
                     for op in opakovane:
                         cc1, cc2 = st.columns([5, 1])
                         den_text = DNY_V_TYDNU.get(op["opakování_den_v_tydnu"], "Neznámý den")
-                        cas_text = op["cas"][:5]
-                        
-                        cc1.info(f"🏃‍♂️ **{op['nazev']}** — Každý **{den_text}** v **{cas_text}** (Místo: {op['misto']})")
+                        cc1.info(f"🏃‍♂️ **{op['nazev']}** — Každý **{den_text}** v **{op['cas'][:5]}** (Místo: {op['misto']})")
                         if cc2.button("🗑️ Smazat", key=f"del_{op['id']}", use_container_width=True):
                             if db.delete_akce(op["id"]):
-                                st.toast(f"Akce '{op['nazev']}' smazána!")
-                                time.sleep(0.5)
                                 st.rerun()
                 else:
                     st.caption("Žádné opakované tréninky.")
-                
-                st.markdown("---")
+            
+            with col_list_jedn:
                 st.markdown("#### 📅 Jednorázové události & Závody")
-                jednorazove = [a for a in akce_list if not a["is_opakována"]]
+                jednorazove = [a for a in raw_akce if not a["is_opakována"]]
+                # USPOŘÁDÁNÍ PODLE DATUMU (Od nejbližších)
+                jednorazove.sort(key=lambda x: x["datum_jednorazove"] if x["datum_jednorazove"] else "")
                 
                 if jednorazove:
                     for je in jednorazove:
@@ -201,14 +257,11 @@ if st.session_state["logged_in"]:
                             datum_cz = datetime.strptime(je["datum_jednorazove"], "%Y-%m-%d").strftime("%d.%m.%Y")
                         except:
                             datum_cz = je["datum_jednorazove"]
-                        cas_text = je["cas"][:5]
                         ikona = "🔥" if je["typ_akce"] == "Závod" else "🏃‍♂️"
                         
-                        cc1.warning(f"{ikona} **{je['nazev']}** — Dne **{datum_cz}** v **{cas_text}** (Místo: {je['misto']})")
+                        cc1.warning(f"{ikona} **{je['nazev']}** — Dne **{datum_cz}** v **{je['cas'][:5]}** (Místo: {je['misto']})")
                         if cc2.button("🗑️ Smazat", key=f"del_{je['id']}", use_container_width=True):
                             if db.delete_akce(je["id"]):
-                                st.toast(f"Akce '{je['nazev']}' smazána!")
-                                time.sleep(0.5)
                                 st.rerun()
                 else:
                     st.caption("Žádné jednorázové akce.")
@@ -217,7 +270,7 @@ if st.session_state["logged_in"]:
         st.title("⚙️ Moje nastavení")
         st.write("Tady budeme moct v budoucnu upravovat profil.")
 
-# --- AUTENTIZAČNÍ OBRAZOVKA (PŘIHLÁŠENÍ / REGISTRACE) ---
+# --- AUTENTIZAČNÍ OBRAZOVKA ---
 else:
     st.title("🔥 FireSport Pro — Ověření spojení")
     tab_login, tab_reg = st.tabs(["🔒 Přihlášení", "📝 Registrace nového účtu"])
