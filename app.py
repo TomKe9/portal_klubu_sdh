@@ -125,7 +125,9 @@ if st.session_state["logged_in"]:
             with st.form("nova_akce_form", clear_on_submit=True):
                 typ_akce = st.selectbox("Typ události", ["Trénink", "Závod"])
                 nazev_akce = st.text_input("Název akce", placeholder="Např. Příprava na základně / Extraliga")
-                cas_akce = st.time_input("Čas začátku", value=datetime.now().time())
+                # Nastaví jako výchozí čas dnešní den, ale přesně v 18:00
+                vychozi_cas = datetime.combine(date.today(), datetime.min.time()).replace(hour=18, minute=0).time()
+                cas_akce = st.time_input("Čas začátku", value=vychozi_cas)
                 misto_akce = st.text_input("Místo", placeholder="Hasičské hřiště / Obec")
                 
                 is_opakovana = st.checkbox("Opakovat tuto akci pravidelně každý týden")
