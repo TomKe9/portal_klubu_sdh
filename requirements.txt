@@ -3,3 +3,4 @@ supabase
 bcrypt
 pandas
 extra-streamlit-components
+streamlit-calendar
