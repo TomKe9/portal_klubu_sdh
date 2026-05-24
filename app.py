@@ -1,15 +1,27 @@
 import streamlit as st
 import bcrypt
 import time
-from typing import Dict, Any, Optional
+from datetime import datetime, date
+from typing import Dict, Any, List, Optional
 from supabase import create_client, Client
 import extra_streamlit_components as stx
 
 # Nastavení konfigurace stránky
-st.set_page_config(page_title="🔥 FireSport Pro | Login Test", page_icon="⚡")
+st.set_page_config(page_title="🔥 FireSport Pro | Kalendář", page_icon="⚡", layout="wide")
+
+# Mapování dnů v týdnu pro hezké zobrazení
+DNY_V_TYDNU = {
+    0: "Pondělí",
+    1: "Úterý",
+    2: "Středa",
+    3: "Čtvrtek",
+    4: "Pátek",
+    5: "Sobota",
+    6: "Neděle"
+}
 
 # ==============================================================================
-# DATOVÁ VRSTVA (POUZE UŽIVATELÉ)
+# DATOVÁ VRSTVA
 # ==============================================================================
 class FireSportDB:
     def __init__(self):
@@ -24,12 +36,7 @@ class FireSportDB:
             clean_login = login.strip().lower()
             if not clean_login:
                 return None
-                
-            # Vyhledáme uživatele buď podle e-mailu nebo podle přezdívky (case-insensitive)
-            res = self.client.table("uzivatele")\
-                .select("*")\
-                .or_(f"email.ilike.{clean_login},prezdivka.ilike.{clean_login}")\
-                .execute()
+            res = self.client.table("uzivatele").select("*").or_(f"email.ilike.{clean_login},prezdivka.ilike.{clean_login}").execute()
             return res.data[0] if res.data else None
         except Exception as e:
             st.error(f"❌ Chyba při hledání uživatele v DB: {e}")
@@ -43,46 +50,154 @@ class FireSportDB:
             st.error(f"❌ Zápis uživatele do databáze selhal: {e}")
             return None
 
+    # Nové databázové metody pro akce
+    def insert_akce(self, a_data: Dict[str, Any]) -> Any:
+        try:
+            return self.client.table("akce").insert(a_data).execute()
+        except Exception as e:
+            st.error(f"❌ Nepodařilo se uložit akci: {e}")
+            return None
+
+    def get_vsechny_akce(self) -> List[Dict[str, Any]]:
+        try:
+            res = self.client.table("akce").select("*").execute()
+            return res.data or []
+        except Exception as e:
+            st.error(f"❌ Nepodařilo se načíst akce z DB: {e}")
+            return []
+
 # ==============================================================================
 # APLIKAČNÍ LOGIKA & AUTOMATICKÉ PŘIHLÁŠENÍ
 # ==============================================================================
 db = FireSportDB()
 cookie_manager = stx.CookieManager()
 
-# Inicializace stavu aplikace (Session State)
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user_name" not in st.session_state:
     st.session_state["user_name"] = ""
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = None
 
-# --- KONTROLA COOKIES PRO AUTOMATICKÉ PŘIHLÁŠENÍ ---
+# Kontrola cookies pro automatické přihlášení
 if not st.session_state["logged_in"]:
     saved_login = cookie_manager.get(cookie="firesport_login_remember")
     if saved_login:
         user = db.get_user_by_login(saved_login)
         if user:
             st.session_state["logged_in"] = True
+            st.session_state["user_id"] = user["id"]
             st.session_state["user_name"] = f"{user['jmeno']} {user['prijmeni']}"
             st.rerun()
 
 # --- OBRAZOVKA PO PŘIHLÁŠENÍ ---
 if st.session_state["logged_in"]:
-    st.title(f"🎉 Úspěšně přihlášen: {st.session_state['user_name']}")
-    st.success("Skvělé! Autentizace i pamatování uživatele funguje.")
-    st.info("Pamatování tě udrží přihlášeného po dobu 30 dnů, nebo dokud neklikneš na tlačítko níže.")
     
-    if st.button("Odhlásit se a smazat paměť"):
-        # Smažeme cookie z prohlížeče
-        cookie_manager.delete("firesport_login_remember")
-        # Vyčistíme stav aplikace
-        st.session_state["logged_in"] = False
-        st.session_state["user_name"] = ""
-        st.rerun()
+    # Boční panel (Sidebar) s navigací a odhlášením
+    with st.sidebar:
+        st.markdown(f"### 🎽 {st.session_state['user_name']}")
+        st.write("---")
+        menu = ["📅 Kalendář & Plánování", "⚙️ Moje nastavení"]
+        volba = st.radio("Sekce aplikace:", menu)
+        st.write("---")
+        if st.button("Odhlásit se a smazat paměť", use_container_width=True):
+            cookie_manager.delete("firesport_login_remember")
+            st.session_state["logged_in"] = False
+            st.session_state["user_name"] = ""
+            st.session_state["user_id"] = None
+            st.rerun()
+
+    # --- MAIN OBSAH: SEKCE KALENDÁŘ ---
+    if volba == "📅 Kalendář & Plánování":
+        st.title("📅 Kalendář akcí & Tréninkový plán")
+        
+        col_form, col_list = st.columns([1, 2])
+        
+        with col_form:
+            st.subheader("➕ Přidat novou událost")
+            
+            with st.form("nova_akce_form", clear_on_submit=True):
+                typ_akce = st.selectbox("Typ události", ["Trénink", "Závod"])
+                nazev_akce = st.text_input("Název akce", placeholder="Např. Příprava na základně / Extraliga")
+                cas_akce = st.time_input("Čas začátku", value=datetime.now().time())
+                misto_akce = st.text_input("Místo", placeholder="Hasičské hřiště / Obec")
+                
+                # Vychytávka pro opakování
+                is_opakovana = st.checkbox("Opakovat tuto akci pravidelně každý týden")
+                
+                if is_opakovana:
+                    # Pokud zaškrtne opakování, ukážeme výběr dnů v týdnu
+                    vybrany_den_nazev = st.selectbox("Vyber den v týdnu pro opakování:", list(DNY_V_TYDNU.values()), index=3) # Výchozí čtvrtek
+                    # Převod názvu dne zpět na číslo (0-6)
+                    opakovat_den_id = [k for k, v in DNY_V_TYDNU.items() if v == vybrany_den_nazev][0]
+                    datum_jednorazove = None
+                else:
+                    # Pokud ne, zadává se klasické jedno kalendářní datum
+                    datum_jednorazove = st.date_input("Datum akce", value=date.today())
+                    opakovat_den_id = None
+                
+                submit_akce = st.form_submit_button("Uložit do kalendáře", type="primary", use_container_width=True)
+                
+            if submit_akce:
+                if not nazev_akce:
+                    st.error("❌ Vyplňte prosím název akce.")
+                else:
+                    payload_akce = {
+                        "vytvoril_uzivatel_id": st.session_state["user_id"],
+                        "typ_akce": typ_akce,
+                        "nazev": nazev_akce,
+                        "cas": cas_akce.strftime("%H:%M:%S"),
+                        "misto": misto_akce if misto_akce else "Nespecifikováno",
+                        "is_opakována": is_opakovana,
+                        "datum_jednorazove": datum_jednorazove.isoformat() if datum_jednorazove else None,
+                        "opakování_den_v_tydnu": opakovat_den_id
+                    }
+                    
+                    if db.insert_akce(payload_akce):
+                        st.success("🎉 Událost byla úspěšně uložena!")
+                        time.sleep(0.5)
+                        st.rerun()
+
+        with col_list:
+            st.subheader("📋 Přehled naplánovaných akcí")
+            akce_list = db.get_vsechny_akce()
+            
+            if not akce_list:
+                st.info("Zatím nejsou naplánované žádné akce ani pravidelné tréninky.")
+            else:
+                # Rozdělíme na opakované a jednorázové pro větší přehlednost
+                st.markdown("#### 🔄 Pravidelné týdenní tréninky / akce")
+                opakovane = [a for a in akce_list if a["is_opakována"]]
+                if opakovane:
+                    for op in opakovane:
+                        den_text = DNY_V_TYDNU.get(op["opakování_den_v_tydnu"], "Neznámý den")
+                        cas_text = op["cas"][:5] # Oříznutí vteřin
+                        st.info(f"🏃‍♂️ **{op['nazev']}** — Každý **{den_text}** v **{cas_text}** (Místo: {op['misto']})")
+                else:
+                    st.caption("Žádné opakované tréninky nejsou nastavené.")
+                
+                st.markdown("---")
+                st.markdown("#### 📅 Jednorázové události & Závody")
+                jednorazove = [a for a in akce_list if not a["is_opakována"]]
+                if jednorazove:
+                    for je in jednorazove:
+                        try:
+                            datum_cz = datetime.strptime(je["datum_jednorazove"], "%Y-%m-%d").strftime("%d.%m.%Y")
+                        except:
+                            datum_cz = je["datum_jednorazove"]
+                        cas_text = je["cas"][:5]
+                        ikona = "🔥" if je["typ_akce"] == "Závod" else "🏃‍♂️"
+                        st.warning(f"{ikona} **{je['nazev']}** — Dne **{datum_cz}** v **{cas_text}** (Místo: {je['misto']})")
+                else:
+                    st.caption("Žádné jednorázové závody nebo tréninky v kalendáři.")
+
+    elif volba == "⚙️ Moje nastavení":
+        st.title("⚙️ Moje nastavení")
+        st.write("Tady budeme moct v budoucnu upravovat profil. Aktuálně vše funguje.")
 
 # --- AUTENTIZAČNÍ OBRAZOVKA (PŘIHLÁŠENÍ / REGISTRACE) ---
 else:
     st.title("🔥 FireSport Pro — Ověření spojení")
-    
     tab_login, tab_reg = st.tabs(["🔒 Přihlášení", "📝 Registrace nového účtu"])
     
     with tab_login:
@@ -98,12 +213,11 @@ else:
             else:
                 user = db.get_user_by_login(login_input)
                 if user:
-                    # Ověření hesla pomocí bcrypt
                     if bcrypt.checkpw(heslo_input.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
                         st.session_state["logged_in"] = True
+                        st.session_state["user_id"] = user["id"]
                         st.session_state["user_name"] = f"{user['jmeno']} {user['prijmeni']}"
                         
-                        # Pokud je zaškrtnuto "Zůstat přihlášený", uložíme login do cookies na 30 dní (v sekundách)
                         if remember_me:
                             cookie_manager.set("firesport_login_remember", login_input, max_age=2592000)
                         
@@ -129,9 +243,7 @@ else:
             if not reg_jmeno or not reg_prijmeni or not reg_email or not reg_heslo:
                 st.warning("⚠️ Vyplňte všechna povinná pole (Jméno, Příjmení, E-mail, Heslo).")
             else:
-                # Zahashování hesla
                 hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                
                 payload = {
                     "jmeno": reg_jmeno,
                     "prijmeni": reg_prijmeni,
@@ -139,7 +251,5 @@ else:
                     "prezdivka": reg_prezdivka if reg_prezdivka else None,
                     "heslo_hash": hashed
                 }
-                
-                novy_uzivatel = db.register_user(payload)
-                if novy_uzivatel:
+                if db.register_user(payload):
                     st.success("🎉 Registrace proběhla úspěšně! Nyní se přepni na záložku Přihlášení.")
