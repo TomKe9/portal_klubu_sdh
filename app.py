@@ -8,7 +8,7 @@ import extra_streamlit_components as stx
 from streamlit_calendar import calendar
 
 # Nastavení konfigurace stránky
-st.set_page_config(page_title="🔥 FireSport Pro | Kalendář", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="🔥 FireSport Pro | Sborový Kalendář", page_icon="⚡", layout="wide")
 
 # Mapování dnů v týdnu pro hezké zobrazení
 DNY_V_TYDNU = {
@@ -58,9 +58,10 @@ class FireSportDB:
             st.error(f"❌ Nepodařilo se uložit akci: {e}")
             return None
 
-    def get_vsechny_akce(self) -> List[Dict[str, Any]]:
+    def get_akce_pro_sdh(self, sdh_nazev: str) -> List[Dict[str, Any]]:
         try:
-            res = self.client.table("akce").select("*").execute()
+            # FILTROVÁNÍ: Načteme pouze akce patřící konkrétnímu SDH
+            res = self.client.table("akce").select("*").eq("sdh", sdh_nazev).execute()
             return res.data or []
         except Exception as e:
             st.error(f"❌ Nepodařilo se načíst akce z DB: {e}")
@@ -78,7 +79,6 @@ class FireSportDB:
 # POMOCNÉ FUNKCE PRO KALENDÁŘ A ŘAZENÍ
 # ==============================================================================
 def vygeneruj_kalendarove_udalosti(akce_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Převede akce z DB na formát událostí, kterým rozumí vizuální kalendář."""
     udalosti = []
     dnes = date.today()
     
@@ -87,9 +87,8 @@ def vygeneruj_kalendarove_udalosti(akce_list: List[Dict[str, Any]]) -> List[Dict
         ikona = "🔥" if akce["typ_akce"] == "Závod" else "🏃‍♂️"
         
         if akce["is_opakována"]:
-            # Pro opakované akce vygenerujeme záznamy na 4 týdny dopředu, aby byly v kalendáři vidět
             target_den = akce["opakování_den_v_tydnu"]
-            for i in range(-7, 28): # Zobrazíme i 1 týden zpět a 4 týdny dopředu
+            for i in range(-7, 28): 
                 den_kontroly = dnes + timedelta(days=i)
                 if den_kontroly.weekday() == target_den:
                     udalosti.append({
@@ -122,6 +121,8 @@ if "user_name" not in st.session_state:
     st.session_state["user_name"] = ""
 if "user_id" not in st.session_state:
     st.session_state["user_id"] = None
+if "user_sdh" not in st.session_state:
+    st.session_state["user_sdh"] = ""
 
 # Kontrola cookies pro automatické přihlášení
 if not st.session_state["logged_in"]:
@@ -132,6 +133,7 @@ if not st.session_state["logged_in"]:
             st.session_state["logged_in"] = True
             st.session_state["user_id"] = user["id"]
             st.session_state["user_name"] = f"{user['jmeno']} {user['prijmeni']}"
+            st.session_state["user_sdh"] = user.get("sdh", "Nespecifikováno")
             st.rerun()
 
 # --- OBRAZOVKA PO PŘIHLÁŠENÍ ---
@@ -139,8 +141,9 @@ if st.session_state["logged_in"]:
     
     with st.sidebar:
         st.markdown(f"### 🎽 {st.session_state['user_name']}")
+        st.markdown(f"🏠 **{st.session_state['user_sdh']}**")
         st.write("---")
-        menu = ["📅 Kalendář & Plánování", "⚙️ Moje nastavení"]
+        menu = ["📅 Týmový Kalendář", "⚙️ Moje nastavení"]
         volba = st.radio("Sekce aplikace:", menu)
         st.write("---")
         if st.button("Odhlásit se a smazat paměť", use_container_width=True):
@@ -148,15 +151,16 @@ if st.session_state["logged_in"]:
             st.session_state["logged_in"] = False
             st.session_state["user_name"] = ""
             st.session_state["user_id"] = None
+            st.session_state["user_sdh"] = ""
             st.rerun()
 
-    if volba == "📅 Kalendář & Plánování":
-        st.title("📅 Kalendář akcí & Tréninkový plán")
+    if volba == "📅 Týmový Kalendář":
+        st.title(f"📅 Kalendář akcí pro {st.session_state['user_sdh']}")
         
         col_form, col_cal = st.columns([1, 2])
         
         with col_form:
-            st.subheader("➕ Přidat novou událost")
+            st.subheader("➕ Nová událost sboru")
             with st.form("nova_akce_form", clear_on_submit=True):
                 typ_akce = st.selectbox("Typ události", ["Trénink", "Závod"])
                 nazev_akce = st.text_input("Název akce", placeholder="Např. Příprava na základně / Extraliga")
@@ -184,6 +188,7 @@ if st.session_state["logged_in"]:
                     formatovany_cas = cas_akce.strftime("%H:%M")
                     payload_akce = {
                         "vytvoril_uzivatel_id": st.session_state["user_id"],
+                        "sdh": st.session_state["user_sdh"],  # Automaticky uzamčeno pod SDH uživatele
                         "typ_akce": typ_akce,
                         "nazev": nazev_akce,
                         "cas": formatovany_cas,
@@ -199,11 +204,11 @@ if st.session_state["logged_in"]:
                         st.rerun()
 
         with col_cal:
-            st.subheader("🗓️ Vizuální přehled")
-            raw_akce = db.get_vsechny_akce()
+            st.subheader("🗓️ Vizuální přehled sboru")
+            # Načítáme pouze akce daného SDH
+            raw_akce = db.get_akce_pro_sdh(st.session_state["user_sdh"])
             udalosti_pro_kalendar = vygeneruj_kalendarove_udalosti(raw_akce)
             
-            # Nastavení vzhledu a chování kalendáře (Začátek pondělím, Čeština, kompaktní výška)
             kalendar_options = {
                 "initialView": "dayGridMonth",
                 "firstDay": 1, 
@@ -218,19 +223,18 @@ if st.session_state["logged_in"]:
             
             calendar(events=udalosti_pro_kalendar, options=kalendar_options)
 
-        # Seznam akcí pod kalendářem uspořádaný podle data
+        # Seznam akcí pod kalendářem
         st.write("---")
         st.subheader("📋 Kompletní seznam akcí a správa")
         
         if not raw_akce:
-            st.info("Zatím nejsou naplánované žádné akce.")
+            st.info(f"Zatím nejsou naplánované žádné akce pro {st.session_state['user_sdh']}.")
         else:
             col_list_op, col_list_jedn = st.columns(2)
             
             with col_list_op:
                 st.markdown("#### 🔄 Pravidelné týdenní tréninky")
                 opakovane = [a for a in raw_akce if a["is_opakována"]]
-                # Seřadíme opakované podle dne v týdnu (Pondělí až Neděle)
                 opakovane.sort(key=lambda x: x["opakování_den_v_tydnu"])
                 
                 if opakovane:
@@ -247,7 +251,6 @@ if st.session_state["logged_in"]:
             with col_list_jedn:
                 st.markdown("#### 📅 Jednorázové události & Závody")
                 jednorazove = [a for a in raw_akce if not a["is_opakována"]]
-                # USPOŘÁDÁNÍ PODLE DATUMU (Od nejbližších)
                 jednorazove.sort(key=lambda x: x["datum_jednorazove"] if x["datum_jednorazove"] else "")
                 
                 if jednorazove:
@@ -268,9 +271,9 @@ if st.session_state["logged_in"]:
 
     elif volba == "⚙️ Moje nastavení":
         st.title("⚙️ Moje nastavení")
-        st.write("Tady budeme moct v budoucnu upravovat profil.")
+        st.write(f"Tvůj profil je registrován pod: **{st.session_state['user_sdh']}**")
 
-# --- AUTENTIZAČNÍ OBRAZOVKA ---
+# --- AUTENTIZAČNÍ OBRAZOVKA (PŘIHLÁŠENÍ / REGISTRACE) ---
 else:
     st.title("🔥 FireSport Pro — Ověření spojení")
     tab_login, tab_reg = st.tabs(["🔒 Přihlášení", "📝 Registrace nového účtu"])
@@ -292,6 +295,7 @@ else:
                         st.session_state["logged_in"] = True
                         st.session_state["user_id"] = user["id"]
                         st.session_state["user_name"] = f"{user['jmeno']} {user['prijmeni']}"
+                        st.session_state["user_sdh"] = user.get("sdh", "Nespecifikováno")
                         
                         if remember_me:
                             cookie_manager.set("firesport_login_remember", login_input, max_age=2592000)
@@ -309,22 +313,24 @@ else:
         with st.form("reg_form"):
             reg_jmeno = st.text_input("Jméno").strip()
             reg_prijmeni = st.text_input("Příjmení").strip()
+            reg_sdh = st.text_input("Název SDH (sboru)", placeholder="Např. SDH Lhota").strip()
             reg_prezdivka = st.text_input("Přezdívka (volitelné)").strip().lower()
             reg_email = st.text_input("E-mail (bude sloužit jako login)").strip().lower()
             reg_heslo = st.text_input("Heslo", type="password")
             submit_reg = st.form_submit_button("Zaregistrovat se")
             
         if submit_reg:
-            if not reg_jmeno or not reg_prijmeni or not reg_email or not reg_heslo:
-                st.warning("⚠️ Vyplňte všechna povinná pole (Jméno, Příjmení, E-mail, Heslo).")
+            if not reg_jmeno or not reg_prijmeni or not reg_email or not reg_heslo or not reg_sdh:
+                st.warning("⚠️ Vyplňte všechna povinná pole (Jméno, Příjmení, Název SDH, E-mail, Heslo).")
             else:
                 hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                 payload = {
                     "jmeno": reg_jmeno,
                     "prijmeni": reg_prijmeni,
+                    "sdh": reg_sdh, # Uložíme název SDH k uživateli
                     "email": reg_email,
                     "prezdivka": reg_prezdivka if reg_prezdivka else None,
                     "heslo_hash": hashed
                 }
                 if db.register_user(payload):
-                    st.success("🎉 Registrace proběhla úspěšně! Nyní se přepni na záložku Přihlášení.")
+                    st.success(f"🎉 Registrace pro {reg_sdh} úspěšná! Nyní se přepni na záložku Přihlášení.")
