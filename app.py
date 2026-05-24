@@ -82,6 +82,28 @@ class FireSportDB:
             st.error(f"Nepodařilo se smazat akci z databáze: {e}")
             return False
 
+    # --- NOVÉ METODY PRO DOCHÁZKU ---
+    def uloz_dochazku(self, akce_id: int, uzivatel_id: int, status: str) -> bool:
+        try:
+            # Protokol upsert: Pokud záznam pro dvojici akce+uživatel existuje, aktualizuje ho, jinak vloží nový
+            self.client.table("dochazka").upsert(
+                {"akce_id": akce_id, "uzivatel_id": uzivatel_id, "status": status},
+                on_conflict="akce_id,uzivatel_id"
+            ).execute()
+            return True
+        except Exception as e:
+            st.error(f"Nepodařilo se uložit docházku: {e}")
+            return False
+
+    def get_dochazka_pro_akci(self, akce_id: int) -> List[Dict[str, Any]]:
+        try:
+            # Načte docházku a zároveň vytáhne jméno a příjmení uživatele z propojené tabulky
+            res = self.client.table("dochazka").select("status, uzivatele(jmeno, prijmeni, id)").eq("akce_id", akce_id).execute()
+            return res.data or []
+        except Exception as e:
+            st.error(f"Nepodařilo se načíst docházku k akci: {e}")
+            return []
+
 # ==============================================================================
 # POMOCNÉ FUNKCE PRO KALENDÁŘ A ŘAZENÍ
 # ==============================================================================
@@ -229,6 +251,7 @@ if st.session_state["logged_in"]:
             
             calendar(events=udalosti_pro_kalendar, options=kalendar_options)
 
+        # --- SEZNAM AKCÍ A DOCHÁZKA ---
         st.write("---")
         st.subheader("Seznam naplánovaných akcí a správa")
         
@@ -237,6 +260,68 @@ if st.session_state["logged_in"]:
         else:
             col_list_op, col_list_jedn = st.columns(2)
             
+            # Pomocná funkce pro vykreslení jedné řádky akce včetně její docházky
+            def vykresli_polozku_akce(akce, detail_id_prefix):
+                # Generování textového popisu
+                if akce["is_opakována"]:
+                    den_text = DNY_V_TYDNU.get(akce["opakování_den_v_tydnu"], "Neznámý den")
+                    cas_info = f"Každý den: {den_text} v {akce['cas'][:5]}"
+                else:
+                    try:
+                        datum_cz = datetime.strptime(akce["datum_jednorazove"], "%Y-%m-%d").strftime("%d.%m.%Y")
+                    except:
+                        datum_cz = akce["datum_jednorazove"]
+                    cas_info = f"Datum: {datum_cz} v {akce['cas'][:5]}"
+
+                st.markdown(f"##### {akce['typ_akce']}: {akce['nazev']}")
+                st.caption(f"{cas_info} | Místo: {akce['misto']}")
+                
+                # Načtení stávající docházky z databáze
+                seznam_dochazky = db.get_dochazka_pro_akci(akce["id"])
+                prihlaseni = [f"{d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']}" for d in seznam_dochazky if d["status"] == "Přijdu"]
+                odhlaseni = [f"{d['uzivatele']['jmeno']} {d['uzivatele']['prijmeni']}" for d in seznam_dochazky if d["status"] == "Nepřijdu"]
+                
+                # Zjištění, jak hlasoval aktuálně přihlášený uživatel
+                moje_volba = "Nevyjádřeno"
+                for d in seznam_dochazky:
+                    if d["uzivatele"] and d["uzivatele"]["id"] == st.session_state["user_id"]:
+                        moje_volba = d["status"]
+                        break
+
+                # Ovládací prvky docházky
+                c1, c2, c3 = st.columns([2, 2, 2])
+                with c1:
+                    if st.button("Přijdu", key=f"ano_{detail_id_prefix}_{akce['id']}", type="secondary" if moje_volba != "Přijdu" else "primary", use_container_width=True):
+                        if db.uloz_dochazku(akce["id"], st.session_state["user_id"], "Přijdu"):
+                            st.rerun()
+                with c2:
+                    if st.button("Nepřijdu", key=f"ne_{detail_id_prefix}_{akce['id']}", type="secondary" if moje_volba != "Nepřijdu" else "primary", use_container_width=True):
+                        if db.uloz_dochazku(akce["id"], st.session_state["user_id"], "Nepřijdu"):
+                            st.rerun()
+                with c3:
+                    if st.button("Smazat akci", key=f"del_{detail_id_prefix}_{akce['id']}", use_container_width=True):
+                        if db.delete_akce(akce["id"]):
+                            st.rerun()
+
+                # Výpis přihlášených členů
+                with st.expander(f"Přehled účasti (Přijdu: {len(prihlaseni)} | Nepřijdu: {len(odhlaseni)})"):
+                    col_p, col_o = st.columns(2)
+                    with col_p:
+                        st.markdown("**Potvrzená účast:**")
+                        if prihlaseni:
+                            for p in prihlaseni:
+                                st.write(f"✓ {p}")
+                        else:
+                            st.caption("Nikdo se nepřihlásil.")
+                    with col_o:
+                        st.markdown("**Omluveni:**")
+                        if odhlaseni:
+                            for o in odhlaseni:
+                                st.write(f"✗ {o}")
+                        else:
+                            st.caption("Nikdo se neomluvil.")
+                st.write("---")
+
             with col_list_op:
                 st.markdown("#### Pravidelné týdenní události")
                 opakovane = [a for a in raw_akce if a["is_opakována"]]
@@ -244,14 +329,9 @@ if st.session_state["logged_in"]:
                 
                 if opakovane:
                     for op in opakovane:
-                        cc1, cc2 = st.columns([5, 1])
-                        den_text = DNY_V_TYDNU.get(op["opakování_den_v_tydnu"], "Neznámý den")
-                        cc1.info(f"**{op['typ_akce']}: {op['nazev']}** — Každý den: **{den_text}** v **{op['cas'][:5]}** (Místo: {op['misto']})")
-                        if cc2.button("Smazat", key=f"del_{op['id']}", use_container_width=True):
-                            if db.delete_akce(op["id"]):
-                                st.rerun()
+                        vykresli_polozku_akce(op, "op")
                 else:
-                    st.caption("Žždné pravidelné události.")
+                    st.caption("Žádné pravidelné události.")
             
             with col_list_jedn:
                 st.markdown("#### Jednorázové události a závody")
@@ -260,20 +340,11 @@ if st.session_state["logged_in"]:
                 
                 if jednorazove:
                     for je in jednorazove:
-                        cc1, cc2 = st.columns([5, 1])
-                        try:
-                            datum_cz = datetime.strptime(je["datum_jednorazove"], "%Y-%m-%d").strftime("%d.%m.%Y")
-                        except:
-                            datum_cz = je["datum_jednorazove"]
-                        
-                        cc1.warning(f"**{je['typ_akce']}: {je['nazev']}** — Datum: **{datum_cz}** v **{je['cas'][:5]}** (Místo: {je['misto']})")
-                        if cc2.button("Smazat", key=f"del_{je['id']}", use_container_width=True):
-                            if db.delete_akce(je["id"]):
-                                st.rerun()
+                        vykresli_polozku_akce(je, "jedn")
                 else:
                     st.caption("Žádné jednorázové události.")
 
-    # --- SEKCE 2: MOJE NASTAVENÍ ---
+# --- SEKCE 2: MOJE NASTAVENÍ ---
     elif volba == "Moje nastavení":
         st.title("Moje nastavení")
         st.write("Správa informací o uživatelském účtu a příslušnosti ke sboru.")
@@ -347,7 +418,7 @@ else:
             if not reg_jmeno or not reg_prijmeni or not reg_email or not reg_heslo or not reg_sdh:
                 st.warning("Vyplňte prosím všechna povinná pole (Jméno, Příjmení, Název SDH, E-mail, Heslo).")
             else:
-                hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt').decode('utf-8')
                 payload = {
                     "jmeno": reg_jmeno,
                     "prijmeni": reg_prijmeni,
