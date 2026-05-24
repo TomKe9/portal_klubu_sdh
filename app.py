@@ -59,14 +59,12 @@ class FireSportDB:
 
     def get_vsechny_akce(self) -> List[Dict[str, Any]]:
         try:
-            # Řadíme od nejnověji vytvořených
             res = self.client.table("akce").select("*").order("created_at", desc=True).execute()
             return res.data or []
         except Exception as e:
             st.error(f"❌ Nepodařilo se načíst akce z DB: {e}")
             return []
 
-    # NOVÁ METODA: Smazání akce podle jejího ID
     def delete_akce(self, akce_id: int) -> bool:
         try:
             self.client.table("akce").delete().eq("id", akce_id).execute()
@@ -102,7 +100,6 @@ if not st.session_state["logged_in"]:
 # --- OBRAZOVKA PO PŘIHLÁŠENÍ ---
 if st.session_state["logged_in"]:
     
-    # Boční panel (Sidebar)
     with st.sidebar:
         st.markdown(f"### 🎽 {st.session_state['user_name']}")
         st.write("---")
@@ -147,11 +144,14 @@ if st.session_state["logged_in"]:
                 if not nazev_akce:
                     st.error("❌ Vyplňte prosím název akce.")
                 else:
+                    # OPRAVA: Ukládáme čas jako čistý textový formát HH:MM bez sekund a bez časových pásem
+                    formatovany_cas = cas_akce.strftime("%H:%M")
+                    
                     payload_akce = {
                         "vytvoril_uzivatel_id": st.session_state["user_id"],
                         "typ_akce": typ_akce,
                         "nazev": nazev_akce,
-                        "cas": cas_akce.strftime("%H:%M:%S"),
+                        "cas": formatovany_cas,
                         "misto": misto_akce if misto_akce else "Nespecifikováno",
                         "is_opakována": is_opakovana,
                         "datum_jednorazove": datum_jednorazove.isoformat() if datum_jednorazove else None,
@@ -170,19 +170,17 @@ if st.session_state["logged_in"]:
             if not akce_list:
                 st.info("Zatím nejsou naplánované žádné akce ani pravidelné tréninky.")
             else:
-                # Rozdělení na opakované a jednorázové
                 st.markdown("#### 🔄 Pravidelné týdenní tréninky / akce")
                 opakovane = [a for a in akce_list if a["is_opakována"]]
                 
                 if opakovane:
                     for op in opakovane:
-                        # Vytvoříme řádek pro akci a tlačítko na smazání vedle sebe
                         cc1, cc2 = st.columns([5, 1])
                         den_text = DNY_V_TYDNU.get(op["opakování_den_v_tydnu"], "Neznámý den")
+                        # OPRAVA: Čas už je uložen jako text, vezmeme ho přesně tak, jak je
                         cas_text = op["cas"][:5]
                         
                         cc1.info(f"🏃‍♂️ **{op['nazev']}** — Každý **{den_text}** v **{cas_text}** (Místo: {op['misto']})")
-                        # Unikátní klíč (key) pro každé tlačítko pomocí ID z databáze
                         if cc2.button("🗑️ Smazat", key=f"del_{op['id']}", use_container_width=True):
                             if db.delete_akce(op["id"]):
                                 st.toast(f"Akce '{op['nazev']}' smazána!")
@@ -218,7 +216,7 @@ if st.session_state["logged_in"]:
         st.title("⚙️ Moje nastavení")
         st.write("Tady budeme moct v budoucnu upravovat profil.")
 
-# --- AUTENTIZAČNÍ OBRAZOVKA (PŘIHLÁŠENÍ / REGISTRACE) ---
+# --- AUTENTIZAČNÍ OBRAZOVKA ---
 else:
     st.title("🔥 FireSport Pro — Ověření spojení")
     tab_login, tab_reg = st.tabs(["🔒 Přihlášení", "📝 Registrace nového účtu"])
@@ -266,7 +264,7 @@ else:
             if not reg_jmeno or not reg_prijmeni or not reg_email or not reg_heslo:
                 st.warning("⚠️ Vyplňte všechna povinná pole (Jméno, Příjmení, E-mail, Heslo).")
             else:
-                hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt').decode('utf-8')
                 payload = {
                     "jmeno": reg_jmeno,
                     "prijmeni": reg_prijmeni,
