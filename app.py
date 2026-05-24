@@ -50,7 +50,6 @@ class FireSportDB:
             st.error(f"❌ Zápis uživatele do databáze selhal: {e}")
             return None
 
-    # Nové databázové metody pro akce
     def insert_akce(self, a_data: Dict[str, Any]) -> Any:
         try:
             return self.client.table("akce").insert(a_data).execute()
@@ -60,11 +59,21 @@ class FireSportDB:
 
     def get_vsechny_akce(self) -> List[Dict[str, Any]]:
         try:
-            res = self.client.table("akce").select("*").execute()
+            # Řadíme od nejnověji vytvořených
+            res = self.client.table("akce").select("*").order("created_at", desc=True).execute()
             return res.data or []
         except Exception as e:
             st.error(f"❌ Nepodařilo se načíst akce z DB: {e}")
             return []
+
+    # NOVÁ METODA: Smazání akce podle jejího ID
+    def delete_akce(self, akce_id: int) -> bool:
+        try:
+            self.client.table("akce").delete().eq("id", akce_id).execute()
+            return True
+        except Exception as e:
+            st.error(f"❌ Nepodařilo se smazat akci z databáze: {e}")
+            return False
 
 # ==============================================================================
 # APLIKAČNÍ LOGIKA & AUTOMATICKÉ PŘIHLÁŠENÍ
@@ -93,7 +102,7 @@ if not st.session_state["logged_in"]:
 # --- OBRAZOVKA PO PŘIHLÁŠENÍ ---
 if st.session_state["logged_in"]:
     
-    # Boční panel (Sidebar) s navigací a odhlášením
+    # Boční panel (Sidebar)
     with st.sidebar:
         st.markdown(f"### 🎽 {st.session_state['user_name']}")
         st.write("---")
@@ -122,17 +131,13 @@ if st.session_state["logged_in"]:
                 cas_akce = st.time_input("Čas začátku", value=datetime.now().time())
                 misto_akce = st.text_input("Místo", placeholder="Hasičské hřiště / Obec")
                 
-                # Vychytávka pro opakování
                 is_opakovana = st.checkbox("Opakovat tuto akci pravidelně každý týden")
                 
                 if is_opakovana:
-                    # Pokud zaškrtne opakování, ukážeme výběr dnů v týdnu
-                    vybrany_den_nazev = st.selectbox("Vyber den v týdnu pro opakování:", list(DNY_V_TYDNU.values()), index=3) # Výchozí čtvrtek
-                    # Převod názvu dne zpět na číslo (0-6)
+                    vybrany_den_nazev = st.selectbox("Vyber den v týdnu pro opakování:", list(DNY_V_TYDNU.values()), index=3)
                     opakovat_den_id = [k for k, v in DNY_V_TYDNU.items() if v == vybrany_den_nazev][0]
                     datum_jednorazove = None
                 else:
-                    # Pokud ne, zadává se klasické jedno kalendářní datum
                     datum_jednorazove = st.date_input("Datum akce", value=date.today())
                     opakovat_den_id = None
                 
@@ -165,35 +170,53 @@ if st.session_state["logged_in"]:
             if not akce_list:
                 st.info("Zatím nejsou naplánované žádné akce ani pravidelné tréninky.")
             else:
-                # Rozdělíme na opakované a jednorázové pro větší přehlednost
+                # Rozdělení na opakované a jednorázové
                 st.markdown("#### 🔄 Pravidelné týdenní tréninky / akce")
                 opakovane = [a for a in akce_list if a["is_opakována"]]
+                
                 if opakovane:
                     for op in opakovane:
+                        # Vytvoříme řádek pro akci a tlačítko na smazání vedle sebe
+                        cc1, cc2 = st.columns([5, 1])
                         den_text = DNY_V_TYDNU.get(op["opakování_den_v_tydnu"], "Neznámý den")
-                        cas_text = op["cas"][:5] # Oříznutí vteřin
-                        st.info(f"🏃‍♂️ **{op['nazev']}** — Každý **{den_text}** v **{cas_text}** (Místo: {op['misto']})")
+                        cas_text = op["cas"][:5]
+                        
+                        cc1.info(f"🏃‍♂️ **{op['nazev']}** — Každý **{den_text}** v **{cas_text}** (Místo: {op['misto']})")
+                        # Unikátní klíč (key) pro každé tlačítko pomocí ID z databáze
+                        if cc2.button("🗑️ Smazat", key=f"del_{op['id']}", use_container_width=True):
+                            if db.delete_akce(op["id"]):
+                                st.toast(f"Akce '{op['nazev']}' smazána!")
+                                time.sleep(0.5)
+                                st.rerun()
                 else:
-                    st.caption("Žádné opakované tréninky nejsou nastavené.")
+                    st.caption("Žádné opakované tréninky.")
                 
                 st.markdown("---")
                 st.markdown("#### 📅 Jednorázové události & Závody")
                 jednorazove = [a for a in akce_list if not a["is_opakována"]]
+                
                 if jednorazove:
                     for je in jednorazove:
+                        cc1, cc2 = st.columns([5, 1])
                         try:
                             datum_cz = datetime.strptime(je["datum_jednorazove"], "%Y-%m-%d").strftime("%d.%m.%Y")
                         except:
                             datum_cz = je["datum_jednorazove"]
                         cas_text = je["cas"][:5]
                         ikona = "🔥" if je["typ_akce"] == "Závod" else "🏃‍♂️"
-                        st.warning(f"{ikona} **{je['nazev']}** — Dne **{datum_cz}** v **{cas_text}** (Místo: {je['misto']})")
+                        
+                        cc1.warning(f"{ikona} **{je['nazev']}** — Dne **{datum_cz}** v **{cas_text}** (Místo: {je['misto']})")
+                        if cc2.button("🗑️ Smazat", key=f"del_{je['id']}", use_container_width=True):
+                            if db.delete_akce(je["id"]):
+                                st.toast(f"Akce '{je['nazev']}' smazána!")
+                                time.sleep(0.5)
+                                st.rerun()
                 else:
-                    st.caption("Žádné jednorázové závody nebo tréninky v kalendáři.")
+                    st.caption("Žádné jednorázové akce.")
 
     elif volba == "⚙️ Moje nastavení":
         st.title("⚙️ Moje nastavení")
-        st.write("Tady budeme moct v budoucnu upravovat profil. Aktuálně vše funguje.")
+        st.write("Tady budeme moct v budoucnu upravovat profil.")
 
 # --- AUTENTIZAČNÍ OBRAZOVKA (PŘIHLÁŠENÍ / REGISTRACE) ---
 else:
