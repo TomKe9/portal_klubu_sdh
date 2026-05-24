@@ -144,7 +144,7 @@ if st.session_state["logged_in"]:
                 if not nazev_akce:
                     st.error("❌ Vyplňte prosím název akce.")
                 else:
-                    # OPRAVA: Ukládáme čas jako čistý textový formát HH:MM bez sekund a bez časových pásem
+                    # Ukládáme čas jako čistý textový formát HH:MM bez sekund a časových pásem
                     formatovany_cas = cas_akce.strftime("%H:%M")
                     
                     payload_akce = {
@@ -177,7 +177,6 @@ if st.session_state["logged_in"]:
                     for op in opakovane:
                         cc1, cc2 = st.columns([5, 1])
                         den_text = DNY_V_TYDNU.get(op["opakování_den_v_tydnu"], "Neznámý den")
-                        # OPRAVA: Čas už je uložen jako text, vezmeme ho přesně tak, jak je
                         cas_text = op["cas"][:5]
                         
                         cc1.info(f"🏃‍♂️ **{op['nazev']}** — Každý **{den_text}** v **{cas_text}** (Místo: {op['misto']})")
@@ -216,7 +215,7 @@ if st.session_state["logged_in"]:
         st.title("⚙️ Moje nastavení")
         st.write("Tady budeme moct v budoucnu upravovat profil.")
 
-# --- AUTENTIZAČNÍ OBRAZOVKA ---
+# --- AUTENTIZAČNÍ OBRAZOVKA (PŘIHLÁŠENÍ / REGISTRACE) ---
 else:
     st.title("🔥 FireSport Pro — Ověření spojení")
     tab_login, tab_reg = st.tabs(["🔒 Přihlášení", "📝 Registrace nového účtu"])
@@ -264,7 +263,7 @@ else:
             if not reg_jmeno or not reg_prijmeni or not reg_email or not reg_heslo:
                 st.warning("⚠️ Vyplňte všechna povinná pole (Jméno, Příjmení, E-mail, Heslo).")
             else:
-                hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt').decode('utf-8')
+                hashed = bcrypt.hashpw(reg_heslo.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                 payload = {
                     "jmeno": reg_jmeno,
                     "prijmeni": reg_prijmeni,
