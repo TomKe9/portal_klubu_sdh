@@ -3,16 +3,12 @@ import bcrypt
 import pandas as pd
 from datetime import datetime
 from supabase import create_client, Client
-import extra_streamlit_components as stx
 
 st.set_page_config(page_title="FireSport Pro | Správa", layout="wide")
 
-# ==============================================================================
-# DATOVÁ VRSTVA
-# ==============================================================================
 class FireSportDB:
     def __init__(self):
-        self.client: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+        self.client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
     def get_user_by_login(self, login: str):
         res = self.client.table("uzivatele").select("*").or_(f"email.ilike.{login.strip().lower()},prezdivka.ilike.{login.strip().lower()}").execute()
@@ -22,6 +18,10 @@ class FireSportDB:
         data = self.client.table("akce").select("*").eq("sdh", sdh).execute().data or []
         if data:
             df = pd.DataFrame(data)
+            # Zajištění, aby sloupce existovaly v paměti, pokud v DB chybí
+            for col in ['cas_levy', 'cas_pravy', 'umisteni']:
+                if col not in df.columns: df[col] = ""
+            
             df['dt'] = pd.to_datetime(df['datum_jednorazove'] + ' ' + df['cas'])
             return df.sort_values('dt').drop(columns=['dt']).to_dict('records')
         return []
@@ -33,72 +33,56 @@ class FireSportDB:
 db = FireSportDB()
 if "logged_in" not in st.session_state: st.session_state.update({"logged_in": False})
 
-# ==============================================================================
-# APLIKACE
-# ==============================================================================
+# --- PŘIHLAŠOVÁNÍ ---
 if not st.session_state["logged_in"]:
-    st.title("🔐 Přihlášení do FireSport Pro")
+    st.title("🔐 Přihlášení")
     with st.form("login"):
-        u = st.text_input("Přezdívka / E-mail")
+        u = st.text_input("Login")
         p = st.text_input("Heslo", type="password")
         if st.form_submit_button("Přihlásit"):
             user = db.get_user_by_login(u)
             if user and bcrypt.checkpw(p.encode(), user["heslo_hash"].encode()):
-                st.session_state.update({"logged_in": True, "user_id": user["id"], "user_name": f"{user['jmeno']} {user['prijmeni']}", "user_sdh": user.get("sdh", "")})
+                st.session_state.update({"logged_in": True, "user_sdh": user.get("sdh", "")})
                 st.rerun()
 else:
-    st.sidebar.title(f"Sbor: {st.session_state['user_sdh']}")
-    if st.sidebar.button("Odhlásit se"): st.session_state.clear(); st.rerun()
+    # --- HLAVNÍ APLIKACE ---
+    st.sidebar.button("Odhlásit se", on_click=lambda: st.session_state.clear())
+    st.title(f"Správa: {st.session_state['user_sdh']}")
 
-    # FORMULÁŘ
+    # Formulář pro přidání
     with st.expander("➕ Přidat novou akci"):
         with st.form("nova_akce"):
             c1, c2, c3 = st.columns(3)
             typ = c1.selectbox("Typ", ["Trénink", "Závod"])
             nazev = c2.text_input("Název")
-            misto = c3.text_input("Místo konání")
+            misto = c3.text_input("Místo")
             datum = st.date_input("Datum")
             cas = st.time_input("Čas")
-            opak = st.checkbox("Opakovat každý týden (jen trénink)") if typ == "Trénink" else False
             if st.form_submit_button("Uložit"):
-                db.insert_akce({"sdh": st.session_state["user_sdh"], "typ_akce": typ, "nazev": nazev, "misto": misto, "datum_jednorazove": datum.isoformat(), "cas": cas.strftime("%H:%M"), "is_opakována": opak})
+                db.insert_akce({"sdh": st.session_state["user_sdh"], "typ_akce": typ, "nazev": nazev, 
+                                "misto": misto, "datum_jednorazove": datum.isoformat(), 
+                                "cas": cas.strftime("%H:%M"), "cas_levy": "", "cas_pravy": "", "umisteni": ""})
                 st.rerun()
 
+    # Tabulka pro editaci
     akce_list = db.get_akce_pro_sdh(st.session_state["user_sdh"])
-
-    # TABULKA ZÁVODŮ (EDITOVATELNÁ S OPRAVOU)
-    st.subheader("🗓 Přehled závodů a výsledky")
     zavody = [a for a in akce_list if a["typ_akce"] == "Závod"]
+    
     if zavody:
         df = pd.DataFrame(zavody)
-        
-        # OŠETŘENÍ CHYBĚJÍCÍCH SLOUPCŮ
-        for col in ['cas_levy', 'cas_pravy', 'umisteni']:
-            if col not in df.columns:
-                df[col] = ""
-        
         df_edit = df[['id', 'nazev', 'misto', 'datum_jednorazove', 'cas_levy', 'cas_pravy', 'umisteni']]
         df_edit.columns = ["ID", "Název", "Místo", "Datum", "Čas Levý", "Čas Pravý", "Umístění"]
         
-        # Interaktivní editor
         edited_df = st.data_editor(df_edit, hide_index=True, column_config={"ID": None})
         
-        if st.button("Uložit změny v závodech"):
+        if st.button("Uložit výsledky (časy/NP)"):
             for _, row in edited_df.iterrows():
-                db.update_akce(row["ID"], {"cas_levy": row["Čas Levý"], "cas_pravy": row["Čas Pravý"], "umisteni": row["Umístění"]})
-            st.success("Změny uloženy!")
+                db.update_akce(row["ID"], {
+                    "cas_levy": str(row["Čas Levý"]), 
+                    "cas_pravy": str(row["Čas Pravý"]), 
+                    "umisteni": str(row["Umístění"])
+                })
+            st.success("Uloženo!")
             st.rerun()
-            
-        vyber_smazat = st.selectbox("Vyberte závod ke smazání:", options=df["id"].tolist(), format_func=lambda x: df[df["id"]==x]["nazev"].values[0])
-        if st.button("Smazat vybraný závod"):
-            db.delete_akce(vyber_smazat); st.rerun()
     else:
-        st.info("Žádné závody.")
-
-    # TRÉNINKY
-    st.subheader("🏋️ Tréninky")
-    for t in [a for a in akce_list if a["typ_akce"] == "Trénink"]:
-        with st.container(border=True):
-            c1, c2 = st.columns([4, 1])
-            c1.write(f"**{t['nazev']}** | {t['datum_jednorazove']} | 📍 {t.get('misto', '-')}")
-            if c2.button("Smazat", key=f"t_{t['id']}"): db.delete_akce(t['id']); st.rerun()
+        st.info("Žádné závody k zobrazení.")
