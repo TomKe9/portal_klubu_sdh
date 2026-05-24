@@ -51,6 +51,15 @@ class FireSportDB:
             st.error(f"❌ Zápis uživatele do databáze selhal: {e}")
             return None
 
+    # NOVÁ METODA: Aktualizace sboru uživatele
+    def update_user_sdh(self, user_id: int, nový_sdh: str) -> bool:
+        try:
+            self.client.table("uzivatele").update({"sdh": nový_sdh}).eq("id", user_id).execute()
+            return True
+        except Exception as e:
+            st.error(f"❌ Nepodařilo se aktualizovat sbor v databázi: {e}")
+            return False
+
     def insert_akce(self, a_data: Dict[str, Any]) -> Any:
         try:
             return self.client.table("akce").insert(a_data).execute()
@@ -60,7 +69,6 @@ class FireSportDB:
 
     def get_akce_pro_sdh(self, sdh_nazev: str) -> List[Dict[str, Any]]:
         try:
-            # FILTROVÁNÍ: Načteme pouze akce patřící konkrétnímu SDH
             res = self.client.table("akce").select("*").eq("sdh", sdh_nazev).execute()
             return res.data or []
         except Exception as e:
@@ -154,6 +162,7 @@ if st.session_state["logged_in"]:
             st.session_state["user_sdh"] = ""
             st.rerun()
 
+    # --- SEKCE 1: KALENDÁŘ ---
     if volba == "📅 Týmový Kalendář":
         st.title(f"📅 Kalendář akcí pro {st.session_state['user_sdh']}")
         
@@ -188,7 +197,7 @@ if st.session_state["logged_in"]:
                     formatovany_cas = cas_akce.strftime("%H:%M")
                     payload_akce = {
                         "vytvoril_uzivatel_id": st.session_state["user_id"],
-                        "sdh": st.session_state["user_sdh"],  # Automaticky uzamčeno pod SDH uživatele
+                        "sdh": st.session_state["user_sdh"],  # Svázáno s aktuálním SDH uživatele
                         "typ_akce": typ_akce,
                         "nazev": nazev_akce,
                         "cas": formatovany_cas,
@@ -205,7 +214,6 @@ if st.session_state["logged_in"]:
 
         with col_cal:
             st.subheader("🗓️ Vizuální přehled sboru")
-            # Načítáme pouze akce daného SDH
             raw_akce = db.get_akce_pro_sdh(st.session_state["user_sdh"])
             udalosti_pro_kalendar = vygeneruj_kalendarove_udalosti(raw_akce)
             
@@ -223,7 +231,6 @@ if st.session_state["logged_in"]:
             
             calendar(events=udalosti_pro_kalendar, options=kalendar_options)
 
-        # Seznam akcí pod kalendářem
         st.write("---")
         st.subheader("📋 Kompletní seznam akcí a správa")
         
@@ -269,11 +276,32 @@ if st.session_state["logged_in"]:
                 else:
                     st.caption("Žádné jednorázové akce.")
 
+    # --- SEKCE 2: MOJE NASTAVENÍ (ZDE MŮŽEŠ UPRAVIT SVŮJ SBOR) ---
     elif volba == "⚙️ Moje nastavení":
         st.title("⚙️ Moje nastavení")
-        st.write(f"Tvůj profil je registrován pod: **{st.session_state['user_sdh']}**")
+        st.write("Zde můžeš spravovat informace o svém účtu a přiřazeném sboru.")
+        
+        st.markdown("---")
+        st.subheader("🏠 Správa sboru (SDH)")
+        st.info(f"Aktuálně jsi přihlášen pod sborem: **{st.session_state['user_sdh']}**")
+        
+        # Formulář pro změnu názvu SDH
+        with st.form("update_sdh_form"):
+            novy_nazev_sdh = st.text_input("Zadej nový nebo opravený název SDH:", value=st.session_state['user_sdh']).strip()
+            st.caption("Pozor: Ostatní členové musí zadat přesně stejný název (včetně velkých/malých písmen), aby sdíleli stejný kalendář.")
+            submit_change = st.form_submit_button("Uložit změnu sboru", type="primary")
+            
+        if submit_change:
+            if not novy_nazev_sdh:
+                st.error("❌ Název sboru nesmí být prázdný.")
+            else:
+                if db.update_user_sdh(st.session_state["user_id"], novy_nazev_sdh):
+                    st.session_state["user_sdh"] = novy_nazev_sdh
+                    st.success(f"🎉 Tvůj profil byl úspěšně přesunut pod sbor: {novy_nazev_sdh}")
+                    time.sleep(1)
+                    st.rerun()
 
-# --- AUTENTIZAČNÍ OBRAZOVKA (PŘIHLÁŠENÍ / REGISTRACE) ---
+# --- AUTENTIZAČNÍ OBRAZOVKA ---
 else:
     st.title("🔥 FireSport Pro — Ověření spojení")
     tab_login, tab_reg = st.tabs(["🔒 Přihlášení", "📝 Registrace nového účtu"])
@@ -327,7 +355,7 @@ else:
                 payload = {
                     "jmeno": reg_jmeno,
                     "prijmeni": reg_prijmeni,
-                    "sdh": reg_sdh, # Uložíme název SDH k uživateli
+                    "sdh": reg_sdh,
                     "email": reg_email,
                     "prezdivka": reg_prezdivka if reg_prezdivka else None,
                     "heslo_hash": hashed
