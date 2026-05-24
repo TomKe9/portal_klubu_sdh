@@ -20,11 +20,17 @@ class FireSportDB:
         return res.data[0] if res.data else None
 
     def get_akce_pro_sdh(self, sdh: str):
-        return self.client.table("akce").select("*").eq("sdh", sdh).execute().data or []
+        data = self.client.table("akce").select("*").eq("sdh", sdh).execute().data or []
+        if data:
+            df = pd.DataFrame(data)
+            # Převod na datetime pro správné seřazení
+            df['dt'] = pd.to_datetime(df['datum_jednorazove'] + ' ' + df['cas'])
+            df = df.sort_values('dt')
+            return df.drop(columns=['dt']).to_dict('records')
+        return []
 
     def insert_akce(self, data): return self.client.table("akce").insert(data).execute()
     def delete_akce(self, id): return self.client.table("akce").delete().eq("id", id).execute()
-    def update_user_sdh(self, id, sdh): return self.client.table("uzivatele").update({"sdh": sdh}).eq("id", id).execute()
 
 db = FireSportDB()
 cookie_manager = stx.CookieManager()
@@ -72,17 +78,17 @@ else:
                 })
                 st.rerun()
 
-    akce = db.get_akce_pro_sdh(st.session_state["user_sdh"])
+    akce_list = db.get_akce_pro_sdh(st.session_state["user_sdh"])
 
-    # TABULKA ZÁVODŮ
+    # TABULKA ZÁVODŮ (Seřazená)
     st.subheader("🗓 Přehled závodů")
-    zavody = [a for a in akce if a["typ_akce"] == "Závod"]
+    zavody = [a for a in akce_list if a["typ_akce"] == "Závod"]
     if zavody:
         df = pd.DataFrame(zavody)[["id", "nazev", "misto", "datum_jednorazove", "cas"]]
         df.columns = ["ID", "Název", "Místo", "Datum", "Čas"]
         st.table(df[["Název", "Místo", "Datum", "Čas"]])
         
-        # Mazání závodů
+        # Mazání závodů přes ID
         id_smazat = st.selectbox("Vyberte ID závodu pro smazání:", options=df["ID"].tolist(), key="del_zav")
         if st.button("Smazat vybraný závod"):
             db.delete_akce(id_smazat)
@@ -90,9 +96,9 @@ else:
     else:
         st.info("Žádné závody nejsou naplánovány.")
 
-    # TRÉNINKY
+    # TRÉNINKY (Seřazené)
     st.subheader("🏋️ Tréninky")
-    treninky = [a for a in akce if a["typ_akce"] == "Trénink"]
+    treninky = [a for a in akce_list if a["typ_akce"] == "Trénink"]
     for t in treninky:
         op_text = "(Každý týden)" if t.get("is_opakována") else ""
         with st.container(border=True):
