@@ -21,13 +21,33 @@ class FireSportDB:
 
     def get_user_by_login(self, login: str):
         res = self.client.table("uzivatele").select("*").or_(f"email.ilike.{login.strip().lower()},prezdivka.ilike.{login.strip().lower()}").execute()
+        return res.data[0] if res.data else Noneimport streamlit as st
+import bcrypt
+import time
+from datetime import datetime, date, timedelta
+from typing import Dict, Any, List, Optional
+from supabase import create_client, Client
+import extra_streamlit_components as stx
+from streamlit_calendar import calendar
+
+# Konfigurace stránky
+st.set_page_config(page_title="FireSport Pro | Informační systém", layout="wide")
+
+# ==============================================================================
+# DATOVÁ VRSTVA
+# ==============================================================================
+class FireSportDB:
+    def __init__(self):
+        self.client: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+
+    def get_user_by_login(self, login: str):
+        res = self.client.table("uzivatele").select("*").or_(f"email.ilike.{login.strip().lower()},prezdivka.ilike.{login.strip().lower()}").execute()
         return res.data[0] if res.data else None
 
     def get_akce_pro_sdh(self, sdh: str):
         return self.client.table("akce").select("*").eq("sdh", sdh).execute().data or []
 
     def get_dochazka_pro_akci(self, akce_id: int):
-        # Načte docházku a jména uživatelů samostatně pro maximální stabilitu
         res = self.client.table("dochazka").select("status, uzivatel_id").eq("akce_id", akce_id).execute()
         users = self.client.table("uzivatele").select("id, jmeno, prijmeni").execute()
         user_map = {u["id"]: f"{u['jmeno']} {u['prijmeni']}" for u in users.data}
@@ -77,15 +97,25 @@ if st.session_state.get("logged_in"):
                 typ = st.selectbox("Typ", ["Trénink", "Závod"])
                 nazev = st.text_input("Název")
                 datum = st.date_input("Datum")
+                cas = st.time_input("Čas začátku", value=datetime.strptime("18:00", "%H:%M").time())
                 if st.form_submit_button("Přidat událost"):
-                    db.insert_akce({"sdh": st.session_state["user_sdh"], "typ_akce": typ, "nazev": nazev, "datum_jednorazove": datum.isoformat()})
+                    db.insert_akce({
+                        "sdh": st.session_state["user_sdh"], 
+                        "typ_akce": typ, 
+                        "nazev": nazev, 
+                        "datum_jednorazove": datum.isoformat(),
+                        "cas": cas.strftime("%H:%M")
+                    })
                     st.rerun()
         
         with c_list:
             akce = db.get_akce_pro_sdh(st.session_state["user_sdh"])
             for a in akce:
                 with st.container(border=True):
-                    st.markdown(f"#### {a['typ_akce']}: {a['nazev']} ({a.get('datum_jednorazove', '')})")
+                    # Zobrazení času, pokud existuje
+                    cas_info = f"v {a.get('cas', '')}" if a.get('cas') else ""
+                    st.markdown(f"#### {a['typ_akce']}: {a['nazev']} | {a.get('datum_jednorazove', '')} {cas_info}")
+                    
                     d = db.get_dochazka_pro_akci(a["id"])
                     prihl = [x["jmeno_uzivatele"] for x in d if x["status"] == "Přijdu"]
                     
