@@ -66,12 +66,17 @@ else:
 
     akce_list = db.get_akce_pro_sdh(st.session_state["user_sdh"])
 
-    # TABULKA ZÁVODŮ (EDITOVATELNÁ)
+    # TABULKA ZÁVODŮ (EDITOVATELNÁ S OPRAVOU)
     st.subheader("🗓 Přehled závodů a výsledky")
     zavody = [a for a in akce_list if a["typ_akce"] == "Závod"]
     if zavody:
         df = pd.DataFrame(zavody)
-        # Výběr sloupců k editaci
+        
+        # OŠETŘENÍ CHYBĚJÍCÍCH SLOUPCŮ
+        for col in ['cas_levy', 'cas_pravy', 'umisteni']:
+            if col not in df.columns:
+                df[col] = ""
+        
         df_edit = df[['id', 'nazev', 'misto', 'datum_jednorazove', 'cas_levy', 'cas_pravy', 'umisteni']]
         df_edit.columns = ["ID", "Název", "Místo", "Datum", "Čas Levý", "Čas Pravý", "Umístění"]
         
@@ -81,9 +86,9 @@ else:
         if st.button("Uložit změny v závodech"):
             for _, row in edited_df.iterrows():
                 db.update_akce(row["ID"], {"cas_levy": row["Čas Levý"], "cas_pravy": row["Čas Pravý"], "umisteni": row["Umístění"]})
+            st.success("Změny uloženy!")
             st.rerun()
             
-        # Mazání závodů
         vyber_smazat = st.selectbox("Vyberte závod ke smazání:", options=df["id"].tolist(), format_func=lambda x: df[df["id"]==x]["nazev"].values[0])
         if st.button("Smazat vybraný závod"):
             db.delete_akce(vyber_smazat); st.rerun()
