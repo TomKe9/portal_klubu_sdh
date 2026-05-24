@@ -31,13 +31,13 @@ if "logged_in" not in st.session_state: st.session_state.update({"logged_in": Fa
 if st.session_state.get("logged_in"):
     st.title(f"Správa akcí: {st.session_state['user_sdh']}")
     
-    # FORMULÁŘ S POLEM PRO MÍSTO
-    with st.expander("➕ Přidat novou akci", expanded=True):
+    # FORMULÁŘ
+    with st.expander("➕ Přidat novou akci", expanded=False):
         with st.form("nova"):
             c1, c2, c3, c4 = st.columns(4)
             typ = c1.selectbox("Typ", ["Trénink", "Závod"])
             nazev = c2.text_input("Název")
-            misto = c3.text_input("Místo konání") # NOVÉ POLE
+            misto = c3.text_input("Místo konání")
             datum = c4.date_input("Datum")
             
             opakovani = False
@@ -54,15 +54,18 @@ if st.session_state.get("logged_in"):
                 })
                 st.rerun()
 
-    # ZÁVODY V TABULCE
+    # ZÁVODY
     st.subheader("🗓 Přehled závodů")
     akce = db.get_akce_pro_sdh(st.session_state["user_sdh"])
     zavody = [a for a in akce if a["typ_akce"] == "Závod"]
     
     if zavody:
-        df_zavody = pd.DataFrame(zavody)[["nazev", "misto", "datum_jednorazove", "cas"]]
-        df_zavody.columns = ["Název", "Místo", "Datum", "Čas"]
-        st.table(df_zavody)
+        for z in zavody:
+            col1, col2 = st.columns([4, 1])
+            col1.write(f"**{z['nazev']}** | Místo: {z.get('misto', '-')} | {z['datum_jednorazove']} v {z['cas']}")
+            if col2.button("Smazat závod", key=f"del_zav_{z['id']}"):
+                db.delete_akce(z['id'])
+                st.rerun()
     else:
         st.info("Žádné závody nejsou naplánovány.")
 
@@ -73,8 +76,11 @@ if st.session_state.get("logged_in"):
         opakovani_text = "(Každý týden)" if t.get("is_opakována") else ""
         misto_text = f"📍 {t.get('misto', 'Nespecifikováno')}"
         with st.container(border=True):
-            st.write(f"**{t['nazev']}** | {t['datum_jednorazove']} v {t['cas']} | {misto_text} {opakovani_text}")
-            if st.button("Smazat trénink", key=f"del_{t['id']}"): db.delete_akce(t['id']); st.rerun()
+            col1, col2 = st.columns([4, 1])
+            col1.write(f"**{t['nazev']}** | {t['datum_jednorazove']} v {t['cas']} | {misto_text} {opakovani_text}")
+            if col2.button("Smazat trénink", key=f"del_tren_{t['id']}"):
+                db.delete_akce(t['id'])
+                st.rerun()
 
 else:
     st.write("Prosím přihlaste se.")
