@@ -10,29 +10,6 @@ from streamlit_calendar import calendar
 # Konfigurace stránky
 st.set_page_config(page_title="FireSport Pro | Informační systém", layout="wide")
 
-DNY_V_TYDNU = {0: "Pondělí", 1: "Úterý", 2: "Středa", 3: "Čtvrtek", 4: "Pátek", 5: "Sobota", 6: "Neděle"}
-
-# ==============================================================================
-# DATOVÁ VRSTVA
-# ==============================================================================
-class FireSportDB:
-    def __init__(self):
-        self.client: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
-
-    def get_user_by_login(self, login: str):
-        res = self.client.table("uzivatele").select("*").or_(f"email.ilike.{login.strip().lower()},prezdivka.ilike.{login.strip().lower()}").execute()
-        return res.data[0] if res.data else Noneimport streamlit as st
-import bcrypt
-import time
-from datetime import datetime, date, timedelta
-from typing import Dict, Any, List, Optional
-from supabase import create_client, Client
-import extra_streamlit_components as stx
-from streamlit_calendar import calendar
-
-# Konfigurace stránky
-st.set_page_config(page_title="FireSport Pro | Informační systém", layout="wide")
-
 # ==============================================================================
 # DATOVÁ VRSTVA
 # ==============================================================================
@@ -112,7 +89,6 @@ if st.session_state.get("logged_in"):
             akce = db.get_akce_pro_sdh(st.session_state["user_sdh"])
             for a in akce:
                 with st.container(border=True):
-                    # Zobrazení času, pokud existuje
                     cas_info = f"v {a.get('cas', '')}" if a.get('cas') else ""
                     st.markdown(f"#### {a['typ_akce']}: {a['nazev']} | {a.get('datum_jednorazove', '')} {cas_info}")
                     
