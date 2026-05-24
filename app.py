@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 from supabase import create_client, Client
 
-# Konfigurace stránky
+# Nastavení stránky
 st.set_page_config(page_title="FireSport Pro | Správa", layout="wide")
 
 # ==============================================================================
@@ -22,7 +22,7 @@ class FireSportDB:
         data = self.client.table("akce").select("*").eq("sdh", sdh).execute().data or []
         if data:
             df = pd.DataFrame(data)
-            # Ošetření: aby aplikace nespadla, pokud sloupce v DB chybí
+            # Zajištění existence sloupců v paměti (pro zobrazení)
             for col in ['cas_levy', 'cas_pravy', 'umisteni']:
                 if col not in df.columns: df[col] = ""
             df['dt'] = pd.to_datetime(df['datum_jednorazove'] + ' ' + df['cas'])
@@ -30,14 +30,22 @@ class FireSportDB:
         return []
 
     def insert_akce(self, data): return self.client.table("akce").insert(data).execute()
-    def update_akce_vysledky(self, id, data): return self.client.table("akce").update(data).eq("id", id).execute()
+    
+    def update_akce_vysledky(self, id, data):
+        # Diagnostický blok: Pokud se zápis nepovede, vypíše chybu
+        try:
+            return self.client.table("akce").update(data).eq("id", id).execute()
+        except Exception as e:
+            st.error(f"Databáze odmítla zápis: {e}. Zkontroluj Policies v Supabase (Authentication -> Policies)!")
+            return None
+
     def delete_akce(self, id): return self.client.table("akce").delete().eq("id", id).execute()
 
 db = FireSportDB()
 if "logged_in" not in st.session_state: st.session_state.update({"logged_in": False})
 
 # ==============================================================================
-# HLAVNÍ APLIKACE
+# APLIKACE
 # ==============================================================================
 if not st.session_state["logged_in"]:
     st.title("🔐 Přihlášení do FireSport Pro")
@@ -47,7 +55,7 @@ if not st.session_state["logged_in"]:
         if st.form_submit_button("Přihlásit"):
             user = db.get_user_by_login(u)
             if user and bcrypt.checkpw(p.encode(), user["heslo_hash"].encode()):
-                st.session_state.update({"logged_in": True, "user_id": user["id"], "user_name": f"{user['jmeno']} {user['prijmeni']}", "user_sdh": user.get("sdh", "")})
+                st.session_state.update({"logged_in": True, "user_id": user["id"], "user_sdh": user.get("sdh", "")})
                 st.rerun()
 else:
     st.sidebar.title(f"Sbor: {st.session_state['user_sdh']}")
