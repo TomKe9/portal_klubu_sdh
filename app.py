@@ -1,7 +1,7 @@
 import streamlit as st
 import bcrypt
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from supabase import create_client, Client
 import extra_streamlit_components as stx
@@ -21,8 +21,6 @@ class FireSportDB:
 
     def insert_akce(self, data): return self.client.table("akce").insert(data).execute()
     def delete_akce(self, id): return self.client.table("akce").delete().eq("id", id).execute()
-    def uloz_dochazku(self, akce_id, uzivatel_id, status): 
-        return self.client.table("dochazka").upsert({"akce_id": akce_id, "uzivatel_id": uzivatel_id, "status": status}, on_conflict="akce_id,uzivatel_id").execute()
 
 # ==============================================================================
 # HLAVNÍ APLIKACE
@@ -33,13 +31,14 @@ if "logged_in" not in st.session_state: st.session_state.update({"logged_in": Fa
 if st.session_state.get("logged_in"):
     st.title(f"Správa akcí: {st.session_state['user_sdh']}")
     
-    # FORMULÁŘ
+    # FORMULÁŘ S POLEM PRO MÍSTO
     with st.expander("➕ Přidat novou akci", expanded=True):
         with st.form("nova"):
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
             typ = c1.selectbox("Typ", ["Trénink", "Závod"])
             nazev = c2.text_input("Název")
-            datum = c3.date_input("Datum")
+            misto = c3.text_input("Místo konání") # NOVÉ POLE
+            datum = c4.date_input("Datum")
             
             opakovani = False
             if typ == "Trénink":
@@ -50,8 +49,8 @@ if st.session_state.get("logged_in"):
             if st.form_submit_button("Uložit akci"):
                 db.insert_akce({
                     "sdh": st.session_state["user_sdh"], "typ_akce": typ, "nazev": nazev, 
-                    "datum_jednorazove": datum.isoformat(), "cas": cas.strftime("%H:%M"),
-                    "is_opakována": opakovani
+                    "misto": misto, "datum_jednorazove": datum.isoformat(), 
+                    "cas": cas.strftime("%H:%M"), "is_opakována": opakovani
                 })
                 st.rerun()
 
@@ -61,8 +60,8 @@ if st.session_state.get("logged_in"):
     zavody = [a for a in akce if a["typ_akce"] == "Závod"]
     
     if zavody:
-        df_zavody = pd.DataFrame(zavody)[["nazev", "datum_jednorazove", "cas"]]
-        df_zavody.columns = ["Název závodu", "Datum", "Čas"]
+        df_zavody = pd.DataFrame(zavody)[["nazev", "misto", "datum_jednorazove", "cas"]]
+        df_zavody.columns = ["Název", "Místo", "Datum", "Čas"]
         st.table(df_zavody)
     else:
         st.info("Žádné závody nejsou naplánovány.")
@@ -72,8 +71,9 @@ if st.session_state.get("logged_in"):
     treninky = [a for a in akce if a["typ_akce"] == "Trénink"]
     for t in treninky:
         opakovani_text = "(Každý týden)" if t.get("is_opakována") else ""
+        misto_text = f"📍 {t.get('misto', 'Nespecifikováno')}"
         with st.container(border=True):
-            st.write(f"**{t['nazev']}** - {t['datum_jednorazove']} v {t['cas']} {opakovani_text}")
+            st.write(f"**{t['nazev']}** | {t['datum_jednorazove']} v {t['cas']} | {misto_text} {opakovani_text}")
             if st.button("Smazat trénink", key=f"del_{t['id']}"): db.delete_akce(t['id']); st.rerun()
 
 else:
