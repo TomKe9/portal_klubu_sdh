@@ -3,6 +3,7 @@ import bcrypt
 import time
 from typing import Dict, Any, Optional
 from supabase import create_client, Client
+import extra_streamlit_components as stx
 
 # Nastavení konfigurace stránky
 st.set_page_config(page_title="🔥 FireSport Pro | Login Test", page_icon="⚡")
@@ -43,9 +44,10 @@ class FireSportDB:
             return None
 
 # ==============================================================================
-# APLIKAČNÍ LOGIKA
+# APLIKAČNÍ LOGIKA & AUTOMATICKÉ PŘIHLÁŠENÍ
 # ==============================================================================
 db = FireSportDB()
+cookie_manager = stx.CookieManager()
 
 # Inicializace stavu aplikace (Session State)
 if "logged_in" not in st.session_state:
@@ -53,14 +55,26 @@ if "logged_in" not in st.session_state:
 if "user_name" not in st.session_state:
     st.session_state["user_name"] = ""
 
+# --- KONTROLA COOKIES PRO AUTOMATICKÉ PŘIHLÁŠENÍ ---
+if not st.session_state["logged_in"]:
+    saved_login = cookie_manager.get(cookie="firesport_login_remember")
+    if saved_login:
+        user = db.get_user_by_login(saved_login)
+        if user:
+            st.session_state["logged_in"] = True
+            st.session_state["user_name"] = f"{user['jmeno']} {user['prijmeni']}"
+            st.rerun()
+
 # --- OBRAZOVKA PO PŘIHLÁŠENÍ ---
 if st.session_state["logged_in"]:
     st.title(f"🎉 Úspěšně přihlášen: {st.session_state['user_name']}")
-    st.balloons()
-    st.success("Skvělé! Autentizace funguje na 100 %. Databáze i kód jsou správně propojené.")
-    st.info("Nyní mi můžeš napsat, jakou sekci (např. tréninkový deník/kalendář) sem máme vrátit jako první.")
+    st.success("Skvělé! Autentizace i pamatování uživatele funguje.")
+    st.info("Pamatování tě udrží přihlášeného po dobu 30 dnů, nebo dokud neklikneš na tlačítko níže.")
     
-    if st.button("Odhlásit se"):
+    if st.button("Odhlásit se a smazat paměť"):
+        # Smažeme cookie z prohlížeče
+        cookie_manager.delete("firesport_login_remember")
+        # Vyčistíme stav aplikace
         st.session_state["logged_in"] = False
         st.session_state["user_name"] = ""
         st.rerun()
@@ -75,6 +89,7 @@ else:
         with st.form("login_form"):
             login_input = st.text_input("E-mail nebo Přezdívka").strip()
             heslo_input = st.text_input("Heslo", type="password")
+            remember_me = st.checkbox("Zůstat přihlášený (na 30 dní)", value=True)
             submit_login = st.form_submit_button("Přihlásit se", type="primary")
             
         if submit_login:
@@ -87,6 +102,11 @@ else:
                     if bcrypt.checkpw(heslo_input.encode('utf-8'), user["heslo_hash"].encode('utf-8')):
                         st.session_state["logged_in"] = True
                         st.session_state["user_name"] = f"{user['jmeno']} {user['prijmeni']}"
+                        
+                        # Pokud je zaškrtnuto "Zůstat přihlášený", uložíme login do cookies na 30 dní (v sekundách)
+                        if remember_me:
+                            cookie_manager.set("firesport_login_remember", login_input, max_age=2592000)
+                        
                         st.success("Ověření úspěšné, načítám...")
                         time.sleep(0.5)
                         st.rerun()
